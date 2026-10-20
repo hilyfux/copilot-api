@@ -20,6 +20,7 @@ import { getUpstreamTransportConfig } from "~/lib/config"
 import { logCopilotRateLimits } from "~/lib/copilot-rate-limit"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { ensureCopilotToken } from "~/lib/token-reload"
 import { parseUserIdMetadata } from "~/lib/utils"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
 
@@ -81,7 +82,7 @@ export const createMessages = async (
     compactType?: CompactType
   },
 ): Promise<CreateMessagesReturn> => {
-  if (!state.copilotToken) throw new Error("Copilot token not found")
+  await ensureCopilotToken()
 
   const enableVision = payload.messages.some((message) => {
     if (!Array.isArray(message.content)) return false

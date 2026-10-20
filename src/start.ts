@@ -23,6 +23,7 @@ import {
   resolveServerBinding,
 } from "./lib/server-host"
 import { state } from "./lib/state"
+import { configureTokenReloader } from "./lib/token-reload"
 import { configureUsageEmitter } from "./lib/token-usage"
 import { openGatewayFromEnv, type CredentialsGateway } from "./gateway"
 import { createManagedAuthenticator } from "./users/managed-auth"
@@ -266,6 +267,26 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await startModelsDevCache()
 
   const serverUrl = formatServerUrl(binding.clientHostname, options.port)
+
+  // A gateway-managed proxy can be configured at any time through the admin UI.
+  // Register the reload strategy BEFORE the first token resolution so a request
+  // that arrives while idle can install the credential without a restart.
+  configureTokenReloader(
+    gateway ?
+      async () => {
+        const resolved = await resolveGitHubToken({
+          credentials: gateway.ports.credentials,
+        })
+        if (!resolved) return false
+        await setupCopilotMode(
+          resolved.token,
+          resolved.source,
+          resolved.accountId,
+        )
+        return true
+      }
+    : null,
+  )
 
   const resolvedGitHubToken =
     isGitHubCopilotEnabled() ?

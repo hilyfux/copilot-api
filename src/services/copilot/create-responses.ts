@@ -27,6 +27,7 @@ import {
 } from "~/lib/copilot-rate-limit"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { ensureCopilotToken } from "~/lib/token-reload"
 import {
   createPooledWebSocketStream,
   createWebSocketUrl,
@@ -63,7 +64,7 @@ export const createResponses = async (
     clientSignal,
   }: ResponsesRequestOptions,
 ): Promise<CreateResponsesReturn> => {
-  if (!state.copilotToken) throw new Error("Copilot token not found")
+  await ensureCopilotToken()
 
   const headers: Record<string, string> = {
     ...copilotHeaders(state, requestId, vision),
