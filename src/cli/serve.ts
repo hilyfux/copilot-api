@@ -15,11 +15,14 @@
  * emitter, provider setup). Nothing about running a Copilot request lives here.
  *
  * Port resolution order (first non-empty wins):
- *   1. HEALTH_PORT      — `Dockerfile.proxy` sets this from its SVC_PORT build
- *                         arg, and cutover-overlap.sh overrides it in lockstep
- *                         with the port it actually publishes
- *   2. COPILOT_API_PORT — agent-stack's per-service override (`<PREFIX>_PORT`)
- *                         in cutover.sh; the live container's real port
+ *   1. COPILOT_API_PORT — the runtime override (`<PREFIX>_PORT`). This is what
+ *                         the cutover and the preflight shadow set, and it must
+ *                         beat HEALTH_PORT: the image bakes HEALTH_PORT to the
+ *                         service's main port, so a shadow asked to listen on the
+ *                         alt port would otherwise bind the main one and never be
+ *                         reachable where the gate probes.
+ *   2. HEALTH_PORT      — baked from the SVC_PORT build arg; cutover-overlap sets
+ *                         it in lockstep with the port it publishes
  *   3. PORT             — the conventional name an operator expects
  *   4. SVC_PORT         — the build arg, if passed through at runtime
  *   5. 39526            — this proxy's registered port (agent-stack/services.json)
@@ -69,8 +72,8 @@ export async function serveFromEnv(
   await runServer({
     host: resolveListenHost([env.COPILOT_API_HOST, env.HOST]),
     port: resolveListenPort([
-      env.HEALTH_PORT,
       env.COPILOT_API_PORT,
+      env.HEALTH_PORT,
       env.PORT,
       env.SVC_PORT,
     ]),
