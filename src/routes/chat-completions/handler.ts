@@ -27,6 +27,19 @@ const logger = createHandlerLogger("chat-completions-handler")
 
 export async function handleCompletion(c: Context) {
   let payload = await c.req.json<ChatCompletionsPayload>()
+  // Same contract as the Messages route: model is required, and model mapping
+  // assumes a string, so an absent one must be answered rather than thrown.
+  if (typeof payload.model !== "string" || payload.model.trim() === "") {
+    return c.json(
+      {
+        error: {
+          type: "invalid_request_error",
+          message: "model is required",
+        },
+      },
+      400,
+    )
+  }
   const requestedModel = payload.model
   payload.model = resolveMappedModel(payload.model)
   if (payload.model !== requestedModel) {

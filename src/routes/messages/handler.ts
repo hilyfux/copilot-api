@@ -57,8 +57,35 @@ export const messagesFlowHandlers = {
   handleWithResponsesApi,
 }
 
+/**
+ * The Messages API requires `model`. Validate it BEFORE anything normalises it:
+ * discovery-suffix stripping and model mapping both assume a string, so a body
+ * without one used to throw inside the handler and surface as 500 — telling the
+ * caller to retry a request it must actually fix. (Deploy gates probe with
+ * exactly such a body, so the crash also read as a healthy auth boundary.)
+ */
+export function requireModelField(
+  payload: unknown,
+): { ok: true; model: string } | { ok: false } {
+  if (typeof payload !== "object" || payload === null) return { ok: false }
+  const model = (payload as { model?: unknown }).model
+  if (typeof model !== "string" || model.trim() === "") return { ok: false }
+  return { ok: true, model }
+}
+
 export async function handleCompletion(c: Context) {
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  if (!requireModelField(anthropicPayload).ok) {
+    return c.json(
+      {
+        error: {
+          type: "invalid_request_error",
+          message: "model is required",
+        },
+      },
+      400,
+    )
+  }
   anthropicPayload.model = fromClaudeDiscoveryModelId(anthropicPayload.model)
   applyClaudeNoToolsEffort(anthropicPayload, c.req.header("user-agent"))
 
