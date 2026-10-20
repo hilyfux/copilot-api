@@ -23,7 +23,26 @@ dist/
 
 *.vsix
 
-.claude
+# Claude Code tooling — same policy as agent-gateway:
+# track the shared config (CLAUDE.md, agents, commands, hooks, settings.json,
+# portable skills); ignore per-machine and per-worktree state.
+.claude/*
+!.claude/CLAUDE.md
+!.claude/agents/
+!.claude/commands/
+!.claude/hooks/
+!.claude/rules/
+!.claude/settings.json
+!.claude/skills/
+.claude/skills/boost/
+.claude/skills/cavepathy/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 
 # mac
 .DS_Store
+
+# knowledge-graph runtime data + machine-local MCP path (same policy as kiro-api)
+.knowledge-graph/
+.mcp.json
