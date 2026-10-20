@@ -89,6 +89,28 @@ export function resolveCodexModelsUrl(requestUrl: string): string {
   return upstreamUrl.toString()
 }
 
+/**
+ * Enforce `ms` on a promise regardless of whether the underlying I/O honours
+ * abort. Rejects with a `TimeoutError` so callers keep their existing timeout
+ * detection, and always clears the timer so a fast response leaves nothing
+ * pending.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`Codex model catalog did not answer in ${ms}ms`)
+      error.name = "TimeoutError"
+      reject(error)
+    }, ms)
+  })
+  try {
+    return await Promise.race([work, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function forwardCodexModels(
   requestUrl: string,
   requestHeaders: Headers,
@@ -98,11 +120,18 @@ export async function forwardCodexModels(
     headers.set("accept", "application/json")
   }
 
-  return await fetch(resolveCodexModelsUrl(requestUrl), {
+  const upstream = fetch(resolveCodexModelsUrl(requestUrl), {
     method: "GET",
     headers,
     signal: AbortSignal.timeout(CODEX_MODELS_TIMEOUT_MS),
   })
+  // The abort signal alone cannot enforce the documented 3s budget: runtimes do
+  // not reliably reject a fetch whose peer accepted the connection and then went
+  // silent before sending response headers, which leaves /v1/models hanging
+  // forever. This service owns the budget it advertises, so it races an explicit
+  // deadline rather than trusting the runtime's abort plumbing.
+  upstream.catch(() => undefined)
+  return await withDeadline(upstream, CODEX_MODELS_TIMEOUT_MS)
 }
 
 function normalizeCodexModel(model: CodexModelDefinition): Model {

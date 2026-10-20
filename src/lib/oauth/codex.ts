@@ -5,12 +5,21 @@ import type { OAuthCredentials } from "~/lib/types/oauth"
 export { CODEX_API_BASE_URL } from "~/services/codex/create-responses"
 
 const CALLBACK_HOST = "127.0.0.1"
+/**
+ * The port OpenAI's Codex OAuth app has registered for the loopback redirect.
+ * A real authorization MUST use it — changing it makes the redirect_uri unknown
+ * to the provider. It is a default, not a constant of nature: tests inject their
+ * own port so they never contend for one fixed socket (that contention is what
+ * made this suite fail in file order but pass in isolation).
+ */
 const CALLBACK_PORT = 1455
 const CALLBACK_PATH = "/auth/callback"
+/** The redirect_uri for a given callback port. Single definition, both uses. */
+const redirectUri = (port: number): string =>
+  `http://localhost:${port}${CALLBACK_PATH}`
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 const TOKEN_URL = "https://auth.openai.com/oauth/token"
-const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`
 const SCOPE = "openid profile email offline_access"
 const JWT_CLAIM_PATH = "https://api.openai.com/auth"
 const REFRESH_BUFFER_MS = 60_000
@@ -45,16 +54,25 @@ export interface LoginCodexOptions {
   onPrompt: (message: string) => Promise<string>
   onProgress?: (message: string) => void
   signal?: AbortSignal
+  /**
+   * Loopback port the callback listener binds. Defaults to the provider's
+   * registered 1455; tests pass a dedicated port so the suite is hermetic
+   * instead of fighting over one fixed socket.
+   */
+  callbackPort?: number
 }
 
 export class CodexOAuthError extends Error {
   readonly reason: "callback_timeout" | "callback_unavailable"
 
-  constructor(reason: CodexOAuthError["reason"]) {
+  constructor(
+    reason: CodexOAuthError["reason"],
+    callbackPort: number = CALLBACK_PORT,
+  ) {
     super(
       reason === "callback_timeout" ?
         "Codex authorization timed out after 2 minutes"
-      : "Could not listen for Codex authorization on port 1455",
+      : `Could not listen for Codex authorization on port ${callbackPort}`,
     )
     this.reason = reason
     this.name = "CodexOAuthError"
@@ -225,6 +243,7 @@ async function exchangeAuthorizationCode(
   code: string,
   verifier: string,
   signal?: AbortSignal,
+  callbackPort: number = CALLBACK_PORT,
 ): Promise<TokenSuccessResult> {
   const response = await fetch(TOKEN_URL, {
     method: "POST",
@@ -236,7 +255,7 @@ async function exchangeAuthorizationCode(
       client_id: CLIENT_ID,
       code,
       code_verifier: verifier,
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri(callbackPort),
     }),
     signal,
   })
@@ -327,7 +346,9 @@ async function refreshAccessToken(
   }
 }
 
-async function createAuthorizationFlow(): Promise<{
+async function createAuthorizationFlow(
+  callbackPort: number = CALLBACK_PORT,
+): Promise<{
   verifier: string
   state: string
   url: string
@@ -337,7 +358,7 @@ async function createAuthorizationFlow(): Promise<{
   const url = new URL(AUTHORIZE_URL)
   url.searchParams.set("response_type", "code")
   url.searchParams.set("client_id", CLIENT_ID)
-  url.searchParams.set("redirect_uri", REDIRECT_URI)
+  url.searchParams.set("redirect_uri", redirectUri(callbackPort))
   url.searchParams.set("scope", SCOPE)
   url.searchParams.set("code_challenge", challenge)
   url.searchParams.set("code_challenge_method", "S256")
@@ -352,6 +373,7 @@ async function createAuthorizationFlow(): Promise<{
 async function waitForAuthorizationCode(
   state: string,
   signal?: AbortSignal,
+  callbackPort: number = CALLBACK_PORT,
 ): Promise<string> {
   signal?.throwIfAborted()
   let resolveCode: ((code: string | null) => void) | undefined
@@ -404,13 +426,13 @@ async function waitForAuthorizationCode(
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject)
-      server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
+      server.listen(callbackPort, CALLBACK_HOST, () => {
         server.off("error", reject)
         resolve()
       })
     })
   } catch {
-    throw new CodexOAuthError("callback_unavailable")
+    throw new CodexOAuthError("callback_unavailable", callbackPort)
   }
 
   let timeout: ReturnType<typeof setTimeout> | undefined
@@ -443,7 +465,8 @@ export async function loginCodex(
   options: LoginCodexOptions,
 ): Promise<CodexCredentials> {
   options.signal?.throwIfAborted()
-  const { verifier, state, url } = await createAuthorizationFlow()
+  const callbackPort = options.callbackPort ?? CALLBACK_PORT
+  const { verifier, state, url } = await createAuthorizationFlow(callbackPort)
   options.signal?.throwIfAborted()
   options.onAuth({
     url,
@@ -455,7 +478,7 @@ export async function loginCodex(
   let code: string | null = null
   let callbackError: CodexOAuthError | undefined
   try {
-    code = await waitForAuthorizationCode(state, options.signal)
+    code = await waitForAuthorizationCode(state, options.signal, callbackPort)
   } catch (error) {
     options.signal?.throwIfAborted()
     if (!(error instanceof CodexOAuthError)) throw error
@@ -482,6 +505,7 @@ export async function loginCodex(
     code,
     verifier,
     options.signal,
+    callbackPort,
   )
   options.signal?.throwIfAborted()
   const accountId = getAccountId(tokenResult.accessToken)

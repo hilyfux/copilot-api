@@ -17,7 +17,17 @@ import {
 } from "~/lib/oauth/codex"
 
 const originalFetch = globalThis.fetch
-const callbackBaseUrl = "http://127.0.0.1:1455"
+/**
+ * Every login in this suite binds a loopback listener, and an aborted login can
+ * leave that socket unusable for the next bind. Giving each login its OWN port
+ * makes the tests independent of each other and of whatever else is running on
+ * the machine — the file used to pass in isolation yet fail in order because all
+ * fifteen tests shared one hardcoded port. Production still defaults to the
+ * provider-registered 1455.
+ */
+let nextCallbackPort = 15_000 + Math.floor(Math.random() * 10_000)
+const allocateCallbackPort = (): number => nextCallbackPort++
+let callbackBaseUrl = ""
 const accessToken = `header.${Buffer.from(
   JSON.stringify({
     "https://api.openai.com/auth": { chatgpt_account_id: "acct_test" },
@@ -45,9 +55,12 @@ afterEach(() => {
 })
 
 async function startLogin(options: Partial<LoginCodexOptions> = {}) {
+  const port = options.callbackPort ?? allocateCallbackPort()
+  callbackBaseUrl = `http://127.0.0.1:${port}`
   const published = Promise.withResolvers<string>()
   const outcome: Promise<CodexCredentials | Error> = loginCodex({
     ...options,
+    callbackPort: port,
     onAuth(info) {
       published.resolve(info.url)
       return options.onAuth?.(info)
@@ -57,7 +70,7 @@ async function startLogin(options: Partial<LoginCodexOptions> = {}) {
     if (!(error instanceof Error)) throw error
     return error
   })
-  return { url: new URL(await published.promise), outcome }
+  return { url: new URL(await published.promise), outcome, port }
 }
 
 async function callback(path: string): Promise<Response> {
@@ -72,11 +85,11 @@ async function callback(path: string): Promise<Response> {
   throw new Error("Callback listener did not start")
 }
 
-async function occupyCallbackPort() {
+async function occupyCallbackPort(port: number) {
   const server = createServer()
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject)
-    server.listen(1455, "127.0.0.1", resolve)
+    server.listen(port, "127.0.0.1", resolve)
   })
   return () =>
     new Promise<void>((resolve) => {
@@ -89,10 +102,13 @@ describe("Codex browser authorization", () => {
   test("publishes the authorization URL and accepts a matching callback", async () => {
     const prompt = mock(() => Promise.resolve(""))
     const signal = new AbortController().signal
-    const { url, outcome } = await startLogin({ onPrompt: prompt, signal })
+    const { url, outcome, port } = await startLogin({
+      onPrompt: prompt,
+      signal,
+    })
     expect(url.origin).toBe("https://auth.openai.com")
     expect(url.searchParams.get("redirect_uri")).toBe(
-      "http://localhost:1455/auth/callback",
+      `http://localhost:${port}/auth/callback`,
     )
     expect(url.searchParams.get("code_challenge_method")).toBe("S256")
     const response = await callback(
@@ -116,7 +132,7 @@ describe("Codex browser authorization", () => {
     const controller = new AbortController()
     const removeListener = spyOn(controller.signal, "removeEventListener")
     const prompt = mock(() => Promise.resolve(""))
-    const { url, outcome } = await startLogin({
+    const { url, outcome, port } = await startLogin({
       signal: controller.signal,
       onPrompt: prompt,
     })
@@ -133,15 +149,22 @@ describe("Codex browser authorization", () => {
     expect(prompt).not.toHaveBeenCalled()
     expect(exchange).not.toHaveBeenCalled()
     expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function))
-    const close = await occupyCallbackPort()
+    const close = await occupyCallbackPort(port)
     await close()
   })
 
   test("uses a two-minute deadline and releases the listener on timeout", async () => {
     const timer = spyOn(globalThis, "setTimeout")
     const prompt = mock(() => Promise.resolve(""))
-    const { outcome } = await startLogin({ onPrompt: prompt })
+    const { outcome, port } = await startLogin({ onPrompt: prompt })
     await callback("/wrong-route")
+    // The watchdog is armed immediately after the listener binds, but a 404 can
+    // be served between the bind and that continuation — poll briefly instead of
+    // asserting on a scheduling race.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (timer.mock.calls.some(([, delay]) => delay === 120_000)) break
+      await Bun.sleep(1)
+    }
     const timeout = timer.mock.calls.find(([, delay]) => delay === 120_000)
     expect(timeout?.[1]).toBe(120_000)
     timeout?.[0](undefined)
@@ -150,7 +173,7 @@ describe("Codex browser authorization", () => {
     )
     expect(prompt).toHaveBeenCalledTimes(1)
     expect(exchange).not.toHaveBeenCalled()
-    const close = await occupyCallbackPort()
+    const close = await occupyCallbackPort(port)
     await close()
   })
 
@@ -169,13 +192,14 @@ describe("Codex browser authorization", () => {
   })
 
   test("reports an unavailable callback listener instead of a missing code", async () => {
-    const close = await occupyCallbackPort()
+    const port = allocateCallbackPort()
+    const close = await occupyCallbackPort(port)
     try {
-      const { outcome } = await startLogin()
+      const { outcome } = await startLogin({ callbackPort: port })
       const error = await outcome
       expect(error).toBeInstanceOf(CodexOAuthError)
       expect((error as CodexOAuthError).reason).toBe("callback_unavailable")
-      expect((error as Error).message).toContain("port 1455")
+      expect((error as Error).message).toContain(`port ${port}`)
       expect(exchange).not.toHaveBeenCalled()
     } finally {
       await close()
@@ -184,13 +208,13 @@ describe("Codex browser authorization", () => {
 
   test("cancels during URL publication without starting a callback listener", async () => {
     const controller = new AbortController()
-    const { outcome } = await startLogin({
+    const { outcome, port } = await startLogin({
       signal: controller.signal,
       onAuth: () => controller.abort(new Error("Cancelled before waiting")),
     })
     expect(await outcome).toEqual(new Error("Cancelled before waiting"))
     expect(exchange).not.toHaveBeenCalled()
-    const close = await occupyCallbackPort()
+    const close = await occupyCallbackPort(port)
     await close()
   })
 
@@ -229,9 +253,11 @@ describe("Codex browser authorization", () => {
     "code=test-code",
     "http://localhost/?code=test-code",
   ])("preserves manual callback fallback for %s", async (input) => {
-    const close = await occupyCallbackPort()
+    const port = allocateCallbackPort()
+    const close = await occupyCallbackPort(port)
     try {
       const { outcome } = await startLogin({
+        callbackPort: port,
         onPrompt: () => Promise.resolve(input),
       })
       expect(await outcome).toMatchObject({ accountId: "acct_test" })
@@ -243,9 +269,11 @@ describe("Codex browser authorization", () => {
   })
 
   test("rejects a manual callback with a mismatched state", async () => {
-    const close = await occupyCallbackPort()
+    const port = allocateCallbackPort()
+    const close = await occupyCallbackPort(port)
     try {
       const { outcome } = await startLogin({
+        callbackPort: port,
         onPrompt: () => Promise.resolve("http://localhost/?code=x&state=wrong"),
       })
       expect(await outcome).toEqual(new Error("Codex OAuth state mismatch"))
@@ -271,9 +299,11 @@ describe("Codex browser authorization", () => {
     ],
   ])("rejects invalid token responses: %s", async (response, message) => {
     tokenResponse = response
-    const close = await occupyCallbackPort()
+    const port = allocateCallbackPort()
+    const close = await occupyCallbackPort(port)
     try {
       const { outcome } = await startLogin({
+        callbackPort: port,
         onPrompt: () => Promise.resolve("code"),
       })
       const error = await outcome

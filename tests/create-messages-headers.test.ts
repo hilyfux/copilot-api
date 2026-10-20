@@ -133,9 +133,22 @@ describe("Messages proxy request headers", () => {
         "Editor-Plugin-Version",
         "Editor-Version",
       ]) {
-        expect(headerNames).toContain(headerName)
+        // HTTP header names are case-insensitive; Bun's macOS transport
+        // lowercases them at the socket, so presence is asserted
+        // case-insensitively and the exact casing we wrote is only checked
+        // where the runtime preserves it.
+        expect(headerNames.map((name) => name.toLowerCase())).toContain(
+          headerName.toLowerCase(),
+        )
+        if (process.platform !== "darwin") {
+          expect(headerNames).toContain(headerName)
+        }
       }
-      expect(rawHeaders[rawHeaders.indexOf("Authorization") + 1]).toBe(
+      const authorizationIndex = rawHeaders.findIndex(
+        (name) => name.toLowerCase() === "authorization",
+      )
+      expect(authorizationIndex).toBeGreaterThanOrEqual(0)
+      expect(rawHeaders[authorizationIndex + 1]).toBe(
         "Bearer test-github-token",
       )
     } finally {
