@@ -21,9 +21,17 @@ describe("serve entry — env-driven listen address", () => {
     expect(resolveListenPort(["39526", "9999", "8888"])).toBe(39526)
   })
 
+  test("falls through to COPILOT_API_PORT (agent-stack's <PREFIX>_PORT override)", () => {
+    // cutover.sh publishes this and does NOT set HEALTH_PORT, so a live
+    // container must honour it or it would bind the build-arg port instead.
+    expect(resolveListenPort([undefined, "40526", "39526"])).toBe(40526)
+  })
+
   test("falls through to PORT, then SVC_PORT, when earlier names are empty", () => {
-    expect(resolveListenPort([undefined, "8080", "39526"])).toBe(8080)
-    expect(resolveListenPort(["", "  ", "39526"])).toBe(39526)
+    expect(resolveListenPort([undefined, undefined, "8080", "39526"])).toBe(
+      8080,
+    )
+    expect(resolveListenPort(["", "  ", "  ", "39526"])).toBe(39526)
   })
 
   test("falls back to the registered port when nothing is set or parseable", () => {
@@ -32,6 +40,10 @@ describe("serve entry — env-driven listen address", () => {
     expect(resolveListenPort(["not-a-port"])).toBe(39526)
     expect(resolveListenPort(["0"])).toBe(39526)
     expect(resolveListenPort(["70000"])).toBe(39526)
+  })
+
+  test("host prefers COPILOT_API_HOST (cutover pins 127.0.0.1) over HOST", () => {
+    expect(resolveListenHost(["127.0.0.1", "0.0.0.0"])).toBe("127.0.0.1")
   })
 
   test("host defaults to 0.0.0.0 for a container, HOST overrides", () => {
