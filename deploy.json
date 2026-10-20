@@ -1,0 +1,15 @@
+{
+  "$schema": "../agent-stack/docs/deploy.schema.md",
+  "service": "copilot-api",
+  "port": 39526,
+  "healthPath": "/",
+  "memoryLimit": "1g",
+  "stateDir": null,
+  "mounts": [],
+  "migrate": false,
+  "stateful": false,
+  "overlapSafe": false,
+  "keyFilter": "created_provider_type='copilot' OR provider_type='copilot'",
+  "requireEnvFlag": null,
+  "notes": "Gateway-MySQL mode, azure-only, single-operator internal use (NOT resold, NOT billed). The GitHub Copilot upstream credential (a long-lived GitHub OAuth token) lives in provider_accounts.access_token (provider_type='copilot'), read via v_proxy_accounts_v1 (agent-gateway mig 166 + the copilot_api access_token/provider_type column grants in mig 169); copilot-api performs its own GitHub->Copilot ephemeral-token exchange at runtime and never writes access_token. stateful=false + stateDir=null on purpose: the credential is NOT a local file, so the container must deploy and health-check green (GET / -> 200) while IDLE, BEFORE any credential exists — the operator imports the Copilot account through the gateway admin UI AFTER the system is live. Only individual Copilot requests fail (gracefully) until then. COPILOT_API_HOME file/env is kept ONLY as a documented loopback / no-gateway fallback and is not required for the container to start. overlapSafe=false: the GitHub->Copilot token refresh loop is a per-process background writer (no shared single-writer lock yet); promote once audited. First deploy is a cold docker-run bootstrap. Requires agent-gateway deployed first on the same host (copilot_api grants mig 168 + 169, pin-lookup routing, nginx X-Backend: copilot-api -> 127.0.0.1:39526)."
+}

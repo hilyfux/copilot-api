@@ -20,12 +20,17 @@ import { createKeysGateway, type KeysGateway } from "./keys"
 import { createUsageGateway, type UsageGateway } from "./usage"
 import { createHealthGateway, type HealthGateway } from "./health"
 import { createSettingsGateway, type SettingsGateway } from "./settings"
+import {
+  createCredentialsGateway,
+  type CredentialsGateway,
+} from "./credentials"
 
 export type GatewayPorts = {
   keys: KeysGateway
   usage: UsageGateway
   health: HealthGateway
   settings: SettingsGateway
+  credentials: CredentialsGateway
 }
 
 export type GatewayHandle = {
@@ -40,6 +45,7 @@ export function createGatewayPorts(pool: GatewayPool): GatewayPorts {
     usage: createUsageGateway(pool),
     health: createHealthGateway(pool),
     settings: createSettingsGateway(pool),
+    credentials: createCredentialsGateway(pool),
   }
 }
 
@@ -78,3 +84,4 @@ export type {
 } from "./usage"
 export type { HealthGateway, HealthState, HealthUpsert } from "./health"
 export type { SettingsGateway } from "./settings"
+export type { CredentialsGateway, CopilotCredential } from "./credentials"
