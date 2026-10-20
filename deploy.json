@@ -2,7 +2,7 @@
   "$schema": "../agent-stack/docs/deploy.schema.md",
   "service": "copilot-api",
   "port": 39526,
-  "healthPath": "/",
+  "healthPath": "/health",
   "memoryLimit": "1g",
   "stateDir": null,
   "mounts": [],

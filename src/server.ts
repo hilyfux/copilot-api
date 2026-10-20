@@ -60,7 +60,9 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   server.use(
     "*",
     createManagedAuthMiddleware(options.authenticator ?? null, {
-      allowUnauthenticatedPaths: ["/"],
+      // "/health" is probed by the container runtime with no credential; it must
+      // never require one or every container would report unhealthy.
+      allowUnauthenticatedPaths: ["/", "/health"],
     }),
   )
   server.use(
@@ -73,6 +75,21 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   )
 
   server.get("/", (c) => c.text("Server running"))
+
+  /**
+   * Health probe. agent-stack's Dockerfile.proxy HEALTHCHECK curls /health and
+   * every other proxy answers there, so this service answers there too rather
+   * than making the shared recipe aware of a per-service path. Deliberately
+   * dumb: it reports that the process is serving, not that the upstream is
+   * reachable — a missing Copilot credential must NOT make the container
+   * unhealthy (the operator imports it after the system is live).
+   */
+  server.get("/health", (c) =>
+    c.json({
+      status: "ok",
+      service: "copilot-api",
+    }),
+  )
 
   server.route("/chat/completions", completionRoutes)
   server.route("/admin/config", configRoutes)

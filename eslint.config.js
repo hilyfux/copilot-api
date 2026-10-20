@@ -11,7 +11,10 @@ import tseslint from "typescript-eslint"
 const configDir = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(
-  { ignores: ["plugin/**", "desktop/**"] },
+  // `.claude/**` holds agent tooling copied from agent-gateway (skills, hooks).
+  // It is not application source and is not part of this project's tsconfig, so
+  // the typed parser cannot resolve it — linting it only produces noise.
+  { ignores: ["plugin/**", "desktop/**", ".claude/**"] },
   { linterOptions: { reportUnusedDisableDirectives: "off" } },
   gitignore(),
   eslint.configs.recommended,
