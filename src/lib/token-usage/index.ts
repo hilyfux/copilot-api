@@ -1,47 +1,37 @@
+/**
+ * index.ts — usage accounting facade.
+ *
+ * WHAT CHANGED AND WHY: this used to persist usage into a local SQLite database
+ * owned by this proxy, with its own pricing table, its own read API and its own
+ * usage-viewer page. That made this service a second, competing owner of billing
+ * data — the exact thing agent-gateway exists to own. Usage now goes to
+ * `usage_events` / `usage_daily` / `client_sessions` in the gateway database via
+ * `src/gateway/`, so a key, its user and its usage live in one place.
+ *
+ * The recorder API is intentionally unchanged: every protocol face already calls
+ * `recordUsage(usage)`, and that seam is the right one. Only the sink moved.
+ */
 import { requestContext, generateTraceId } from "~/lib/request-context"
-import { state } from "~/lib/state"
 
-import { EventBus } from "../event-bus"
+import type { UsageEventRow } from "~/gateway"
+import type { UsageEmitter } from "~/users/usage-emitter"
+
 import { resolveTokenUsageCost, type TokenUsagePricingConfig } from "./pricing"
 import {
-  enqueueTokenUsageWrite,
   hasAnyToken,
   normalizeOptionalToken,
   normalizeToken,
-  resolveTotalTokens,
-  type PersistedTokenUsageEvent,
   type TokenUsageEndpoint,
   type TokenUsageSource,
   type UsageTokens,
-} from "./store"
+} from "./tokens"
 
-export {
-  closeUsageStore,
-  getTokenUsageDailySummary,
-  getTokenUsageEventsPage,
-  getTokenUsageSessionsPage,
-  getTokenUsageSummary,
-  normalizeOptionalToken,
-  normalizeToken,
-} from "./store"
-
+export { normalizeOptionalToken, normalizeToken } from "./tokens"
 export type {
-  TokenUsageDailyBucket,
-  TokenUsageDailySummary,
-  TokenUsageCost,
-  TokenUsageEventCost,
   TokenUsageEndpoint,
-  TokenUsageEventRecord,
-  TokenUsageEventsPage,
-  TokenUsageModelSummary,
-  TokenUsagePeriod,
-  TokenUsageSessionsPage,
-  TokenUsageSessionSummary,
   TokenUsageSource,
-  TokenUsageSummary,
-  TokenUsageTotals,
   UsageTokens,
-} from "./store"
+} from "./tokens"
 
 export interface TokenUsageEventInput extends UsageTokens {
   serviceTier?: string | null
@@ -79,11 +69,16 @@ type ProviderTokenUsageRecorderOptions = Omit<
   "source"
 >
 
-interface TokenUsageEventMap {
-  "token_usage.recorded": PersistedTokenUsageEvent
-}
+/**
+ * The sink is injected at the composition root, so this module holds no opinion
+ * about how usage reaches the gateway. Unset (tests, standalone runs) means
+ * usage is not recorded — never a crash on the request path.
+ */
+let emitter: UsageEmitter | null = null
 
-const tokenUsageEventBus = new EventBus<TokenUsageEventMap>()
+export function configureUsageEmitter(next: UsageEmitter | null): void {
+  emitter = next
+}
 
 function resolveTraceId(traceId: string | null | undefined): string {
   return (
@@ -103,90 +98,99 @@ export function resolveTokenUsageSessionId(
   )
 }
 
-function resolveUserId(input: TokenUsageEventInput): string {
-  if (input.source === "provider") {
-    return input.providerName?.trim() || ""
-  }
-  return state.userName?.trim() || ""
+/** `messages` / `provider_messages` are spoken Anthropic; the rest are OpenAI-shaped. */
+function downstreamProtocolFor(
+  endpoint: TokenUsageEndpoint,
+): "anthropic" | "openai" {
+  return endpoint === "messages" || endpoint === "provider_messages" ?
+      "anthropic"
+    : "openai"
 }
 
-function toPersistedEvent(
-  input: TokenUsageEventInput,
-): PersistedTokenUsageEvent | null {
+function toUsageEventRow(input: TokenUsageEventInput): UsageEventRow | null {
   if (!hasAnyToken(input)) {
     return null
   }
 
-  const now = new Date()
-  const cost = resolveTokenUsageCost({ ...input, at: now })
+  const context = requestContext.getStore()
+  // No authenticated key means there is nothing to attribute usage to.
+  // usage_events.key_hash is NOT NULL, so such a request is skipped rather than
+  // written under a synthetic key.
+  if (!context?.gatewayKeyHash) {
+    return null
+  }
+
+  const model = input.model.trim() || "unknown"
+
   return {
-    cache_creation_input_tokens: normalizeToken(
-      input.cache_creation_input_tokens,
-    ),
-    cache_read_input_tokens: normalizeToken(input.cache_read_input_tokens),
-    cost_currency: cost?.currency ?? null,
-    cost_source: cost?.source ?? null,
-    created_at_ms: now.getTime(),
-    created_at_utc: now.toISOString(),
-    endpoint: input.endpoint,
-    input_tokens: normalizeToken(input.input_tokens),
-    model: input.model.trim() || "unknown",
-    output_tokens: normalizeToken(input.output_tokens),
-    provider_name: input.providerName?.trim() || null,
-    session_id: resolveTokenUsageSessionId(
-      input.sessionId,
-      input.fallbackSessionId,
-    ),
-    source: input.source,
-    total_nano_aiu:
-      input.total_nano_aiu === undefined || input.total_nano_aiu === null ?
-        null
-      : normalizeToken(input.total_nano_aiu),
-    total_cost_nanos: cost?.total_cost_nanos ?? null,
-    total_tokens: resolveTotalTokens(input),
-    trace_id: resolveTraceId(input.traceId),
-    user_id: resolveUserId(input),
+    requestId: resolveTraceId(input.traceId ?? context.traceId),
+    occurredAt: new Date(),
+    keyHash: context.gatewayKeyHash,
+    userId: context.gatewayUserId ?? null,
+    providerType:
+      input.source === "copilot" ?
+        "copilot"
+      : input.providerName?.trim() || "copilot",
+    accountId: context.gatewayAccountId ?? null,
+    sessionId:
+      resolveTokenUsageSessionId(input.sessionId, input.fallbackSessionId)
+      || null,
+    model,
+    // The fork translates between protocols, so the model the client asked for is
+    // the model that served unless a mapping rewrote it; `model` is already the
+    // resolved upstream id at every call site.
+    servedModel: model,
+    downstreamProtocol: downstreamProtocolFor(input.endpoint),
+    inputTokens: normalizeToken(input.input_tokens),
+    cacheReadTokens: normalizeToken(input.cache_read_input_tokens),
+    cacheCreationTokens: normalizeToken(input.cache_creation_input_tokens),
+    outputTokens: normalizeToken(input.output_tokens),
+    reasoningTokens: 0,
+    durationMs: Date.now() - context.startTime,
+    statusCode: null,
+    networkRegion: null,
   }
 }
 
-tokenUsageEventBus.subscribe("token_usage.recorded", enqueueTokenUsageWrite)
-
 export function recordTokenUsageEvent(input: TokenUsageEventInput): void {
-  const event = toPersistedEvent(input)
-  if (!event) {
+  const row = toUsageEventRow(input)
+  if (!row) {
     return
   }
 
-  tokenUsageEventBus.publish("token_usage.recorded", event)
+  // Cost is still resolved so the operator sees a per-request figure in the log;
+  // agent-gateway's charge-worker remains the authority on money and re-prices
+  // from usage_events.
+  const cost = resolveTokenUsageCost({ ...input, at: new Date() })
+  if (cost) {
+    console.debug(
+      `[usage] ${row.model} ${row.inputTokens}/${row.outputTokens} tokens ~ ${(
+        cost.total_cost_nanos / 1e9
+      ).toFixed(6)} ${cost.currency}`,
+    )
+  }
+
+  emitter?.emit(row)
 }
 
 export function createTokenUsageRecorder(
   options: TokenUsageRecorderOptions,
 ): (usage: UsageTokens) => void {
   return (usage) => {
-    recordTokenUsageEvent({
-      ...usage,
-      ...options,
-    })
+    recordTokenUsageEvent({ ...usage, ...options })
   }
 }
 
 export function createCopilotTokenUsageRecorder(
   options: CopilotTokenUsageRecorderOptions,
 ): (usage: UsageTokens) => void {
-  return createTokenUsageRecorder({
-    ...options,
-    source: "copilot",
-  })
+  return createTokenUsageRecorder({ ...options, source: "copilot" })
 }
 
 export function createProviderTokenUsageRecorder(
   options: ProviderTokenUsageRecorderOptions,
 ): (usage: UsageTokens) => void {
-  return createTokenUsageRecorder({
-    ...options,
-    source: "provider",
-  })
+  return createTokenUsageRecorder({ ...options, source: "provider" })
 }
 
 export function normalizeOpenAIUsage(

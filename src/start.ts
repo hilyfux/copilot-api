@@ -18,15 +18,15 @@ import { initOpencodeVersion } from "./lib/opencode"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import {
-  getConfiguredApiKeys,
-  getMissingApiKeysMessage,
-} from "./lib/request-auth"
-import {
   DEFAULT_SERVER_HOST,
   formatServerUrl,
   resolveServerBinding,
 } from "./lib/server-host"
 import { state } from "./lib/state"
+import { configureUsageEmitter } from "./lib/token-usage"
+import { openGatewayFromEnv } from "./gateway"
+import { createManagedAuthenticator } from "./users/managed-auth"
+import { createUsageEmitter, nullUsageEmitter } from "./users/usage-emitter"
 
 interface RunServerOptions {
   host: string
@@ -111,15 +111,22 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   mergeConfigWithDefaults()
 
-  const configuredApiKeys = getConfiguredApiKeys()
-  const binding = resolveServerBinding(
-    options.host,
-    configuredApiKeys.length > 0,
-  )
+  // Auth is owned by agent-gateway now: a non-loopback bind is only allowed once
+  // a gateway connection is configured, because that is the only thing that can
+  // tell a valid key from an invalid one. Without it, binding publicly would mean
+  // serving an unauthenticated proxy to the network.
+  const gateway = openGatewayFromEnv()
 
-  const missingApiKeysMessage = getMissingApiKeysMessage()
-  if (missingApiKeysMessage) {
-    consola.info(missingApiKeysMessage)
+  const binding = resolveServerBinding(options.host, gateway !== null)
+
+  if (gateway) {
+    consola.info(
+      "Gateway auth enabled: client keys are validated against agent_gateway.client_keys.",
+    )
+  } else if (binding.networkExposed) {
+    consola.warn(
+      "GATEWAY_MYSQL_* is not configured; running without key authentication.",
+    )
   }
 
   await initOpencodeVersion()
@@ -154,12 +161,25 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     await setupProviderMode()
   }
 
+  // One emitter for the process; the recorder facade emits into it.
+  const usageEmitter =
+    gateway ? createUsageEmitter(gateway.ports.usage) : nullUsageEmitter()
+  configureUsageEmitter(usageEmitter)
+
+  const authenticator =
+    gateway ? createManagedAuthenticator(gateway.ports.keys) : null
+
   consola.box(
-    `🌐 Dashboard Viewer: ${serverUrl}/usage-viewer?endpoint=${serverUrl}/usage`,
+    gateway ?
+      `🔐 Client keys: agent-gateway   ·   usage: agent_gateway.usage_events`
+    : `⚠️  No gateway configured — requests are unauthenticated (loopback only)\n${serverUrl}`,
   )
 
   const { createServer } = await import("./server")
-  const server = createServer({ networkExposed: binding.networkExposed })
+  const server = createServer({
+    networkExposed: binding.networkExposed,
+    authenticator,
+  })
 
   serve({
     fetch: server.fetch as ServerHandler,

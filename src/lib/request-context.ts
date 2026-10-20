@@ -7,6 +7,12 @@ export interface RequestContext {
   sessionAffinity: string | undefined
   rootSessionId?: string
   parentSessionId: string | undefined
+  /** sha256 hex of the presented client key; set by the managed auth middleware. */
+  gatewayKeyHash?: string
+  /** agent_gateway client_keys.user_id for that key. */
+  gatewayUserId?: string | null
+  /** Upstream account that served the request, when one was bound. */
+  gatewayAccountId?: string | null
 }
 
 const TRACE_ID_MAX_LENGTH = 64

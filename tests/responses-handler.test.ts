@@ -93,9 +93,13 @@ const createMessagesResponse = (
   })
 
 const { state } = await import("~/lib/state")
-const { closeUsageStore } = await import("~/lib/token-usage")
 const { traceIdMiddleware } = await import("~/lib/trace")
-const { tokenUsageRoute } = await import("~/routes/token-usage/route")
+const { configureUsageEmitter } = await import("~/lib/token-usage")
+const { requestContext } = await import("~/lib/request-context")
+const { createCapturingEmitter } = await import("./capture-usage")
+
+const usageCapture = createCapturingEmitter()
+configureUsageEmitter(usageCapture)
 const { responsesHandlerDependencies } = await import(
   "~/routes/responses/handler"
 )
@@ -132,8 +136,17 @@ const originalState = {
 function createApp(): Hono {
   const app = new Hono()
   app.use(traceIdMiddleware)
+  // Direct app tests have no auth middleware; stamp the identity usage
+  // attribution needs, exactly as the managed-auth middleware would.
+  app.use(async (_c, next) => {
+    const store = requestContext.getStore()
+    if (store) {
+      store.gatewayKeyHash = "test-key-hash"
+      store.gatewayUserId = "test-user"
+    }
+    await next()
+  })
   app.route("/v1/responses", responsesRoutes)
-  app.route("/token-usage", tokenUsageRoute)
   return app
 }
 
@@ -144,9 +157,8 @@ async function* streamChunks(items: Array<Record<string, unknown>>) {
   }
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   process.env[DB_PATH_ENV] = ":memory:"
-  await closeUsageStore()
 
   state.copilotToken = "test-token"
   state.accountType = "individual"
@@ -186,8 +198,7 @@ beforeEach(async () => {
   createResponses.mockReset()
 })
 
-afterEach(async () => {
-  await closeUsageStore()
+afterEach(() => {
   Reflect.deleteProperty(process.env, DB_PATH_ENV)
 
   state.copilotToken = originalState.copilotToken
@@ -2088,34 +2099,18 @@ describe("responses handler token usage", () => {
     expect(response.status).toBe(200)
     await response.text()
 
-    const eventsResponse = await app.request(
-      "/token-usage/events?period=day&page=1&page_size=10",
-    )
-    expect(eventsResponse.status).toBe(200)
-
-    const page = (await eventsResponse.json()) as {
-      items: Array<{
-        cache_read_input_tokens: number
-        input_tokens: number
-        output_tokens: number
-        session_id: string
-        total_nano_aiu: number | null
-        total_tokens: number
-      }>
-    }
-    expect(page.items).toHaveLength(1)
-
     const expectedRequestId = generateRequestIdFromPayload({
       messages: payload.input,
     })
     const expectedInteractionId = getUUID(expectedRequestId)
 
-    expect(page.items[0]?.session_id).toBe(expectedInteractionId)
-    expect(page.items[0]?.cache_read_input_tokens).toBe(1)
-    expect(page.items[0]?.input_tokens).toBe(4)
-    expect(page.items[0]?.output_tokens).toBe(2)
-    expect(page.items[0]?.total_nano_aiu).toBe(1234)
-    expect(page.items[0]?.total_tokens).toBe(7)
+    expect(usageCapture.rows).toHaveLength(1)
+    const row = usageCapture.rows[0]
+    expect(row?.sessionId).toBe(expectedInteractionId)
+    expect(row?.cacheReadTokens).toBe(1)
+    expect(row?.inputTokens).toBe(4)
+    expect(row?.outputTokens).toBe(2)
+    expect(row?.downstreamProtocol).toBe("openai")
   })
 })
 

@@ -10,6 +10,7 @@ import {
 } from "~/lib/config"
 import { PATHS } from "~/lib/paths"
 import { videoRouteDependencies, videoRoutes } from "~/routes/videos/route"
+import { staticAuthenticator } from "./static-auth"
 import { createServer } from "~/server"
 import { forwardXaiVideos, XaiVideosRequestError } from "~/services/xai/videos"
 
@@ -92,7 +93,9 @@ describe("video routes", () => {
   test.each(["/videos", "/v1/videos"])(
     "registers authenticated submit and result endpoints at %s",
     async (prefix) => {
-      const app = createServer({ getApiKeys: () => ["gateway-key"] })
+      const app = createServer({
+        authenticator: staticAuthenticator(["gateway-key"]),
+      })
       const headers = {
         authorization: "Bearer gateway-key",
         "x-api-key": "gateway-key",
@@ -135,7 +138,9 @@ describe("video routes", () => {
   test.each(["/videos", "/v1/videos"])(
     "rejects missing or invalid gateway credentials at %s",
     async (prefix) => {
-      const app = createServer({ getApiKeys: () => ["gateway-key"] })
+      const app = createServer({
+        authenticator: staticAuthenticator(["gateway-key"]),
+      })
       for (const authorization of [undefined, "Bearer wrong-key"]) {
         for (const method of ["POST", "GET"]) {
           const response = await app.request(
@@ -453,7 +458,12 @@ describe("video routes", () => {
   })
 
   test("does not register provider-scoped or editing endpoints", async () => {
-    const app = createServer({ getApiKeys: () => [] })
+    // Authenticate with a live key so the request reaches routing: we are
+    // asserting these endpoints are NOT registered (404), not that auth blocks
+    // them (401). An empty-key authenticator would reject at the gate first.
+    const app = createServer({
+      authenticator: staticAuthenticator(["gateway-key"]),
+    })
     for (const endpoint of [
       "/xai/v1/videos/generations",
       "/xai/videos/generations",
@@ -462,6 +472,7 @@ describe("video routes", () => {
     ]) {
       const response = await app.request(endpoint, {
         method: "POST",
+        headers: { "x-api-key": "gateway-key" },
         body: JSON.stringify({ model }),
       })
       expect(response.status).toBe(404)

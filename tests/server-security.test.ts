@@ -10,6 +10,7 @@ import {
   resolveServerBinding,
 } from "~/lib/server-host"
 import { createServer } from "~/server"
+import { staticAuthenticator } from "./static-auth"
 
 describe("server host security", () => {
   test("recognizes explicit loopback hosts", () => {
@@ -81,14 +82,39 @@ describe("server host security", () => {
 })
 
 describe("network-exposed server policy", () => {
-  test("requires authentication for protected routes when no keys exist", async () => {
+  // NEW CONTRACT (post-strip): auth is owned by agent-gateway. The old
+  // "networkExposed + no static keys" runtime state no longer exists — without a
+  // gateway there is nothing that can tell a valid key from an invalid one, so a
+  // public bind is refused at startup by resolveServerBinding (the second arg is
+  // "a gateway is configured", surfaced as `gateway !== null` in start.ts). A
+  // network-exposed process therefore always carries a gateway authenticator,
+  // and that authenticator gates every protected route.
+  test("refuses a network bind unless a gateway is configured", () => {
+    expect(() => resolveServerBinding("0.0.0.0", false)).toThrow(
+      "Refusing to listen on non-loopback host",
+    )
+    expect(() => resolveServerBinding("gateway.example.com", false)).toThrow(
+      "Refusing to listen on non-loopback host",
+    )
+    // A configured gateway is the one thing that unlocks the public bind.
+    expect(resolveServerBinding("0.0.0.0", true).networkExposed).toBe(true)
+  })
+
+  test("gates protected routes once a gateway authenticator is attached", async () => {
+    // A network-exposed process is only reachable with an authenticator, which
+    // rejects a request that presents no key.
     const app = createServer({
       networkExposed: true,
-      getApiKeys: () => [],
+      authenticator: staticAuthenticator(["live-key"]),
     })
-    const response = await app.request("http://gateway.example.com/usage")
 
-    expect(response.status).toBe(401)
+    const noKey = await app.request("http://gateway.example.com/usage")
+    expect(noKey.status).toBe(401)
+
+    const badKey = await app.request("http://gateway.example.com/usage", {
+      headers: { "x-api-key": "wrong-key" },
+    })
+    expect(badKey.status).toBe(401)
   })
 
   test("allows only the request origin through CORS", async () => {

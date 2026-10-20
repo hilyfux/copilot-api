@@ -24,8 +24,10 @@ import type {
 
 import { COMPACT_REQUEST } from "~/lib/compact"
 import { installModelsDevCatalog } from "~/lib/models-dev-cache"
-import { closeUsageStore, getTokenUsageEventsPage } from "~/lib/token-usage"
+import { configureUsageEmitter } from "~/lib/token-usage"
+import { requestContext } from "~/lib/request-context"
 
+import { createCapturingEmitter } from "./capture-usage"
 import { modelsDevCatalogFixture } from "./fixtures/models-dev-catalog"
 
 const DB_PATH_ENV = "COPILOT_API_SQLITE_DB_PATH"
@@ -106,9 +108,31 @@ const createContext = () =>
     json: (body: unknown) => Response.json(body),
   }) as Parameters<typeof handleWithChatCompletions>[0]
 
-beforeEach(async () => {
+/**
+ * Handlers only attribute usage to a client key, and a direct handler call has
+ * no auth middleware to supply one. This runs the callback inside the same
+ * request context the middleware would have built.
+ */
+const withGatewayIdentity = <T>(fn: () => T) =>
+  requestContext.run(
+    {
+      traceId: "test-trace",
+      startTime: Date.now(),
+      userAgent: "test",
+      sessionAffinity: undefined,
+      parentSessionId: undefined,
+      gatewayKeyHash: "test-key-hash",
+      gatewayUserId: "test-user",
+    },
+    fn,
+  )
+
+const usageCapture = createCapturingEmitter()
+configureUsageEmitter(usageCapture)
+
+beforeEach(() => {
+  usageCapture.reset()
   process.env[DB_PATH_ENV] = ":memory:"
-  await closeUsageStore()
   capturedPayload = null
   capturedMessagesPayload = null
   capturedResponsesPayload = null
@@ -129,10 +153,9 @@ beforeEach(async () => {
   createResponses.mockClear()
 })
 
-afterEach(async () => {
+afterEach(() => {
   Object.assign(messagesApiFlowDependencies, defaultMessagesApiFlowDependencies)
   Object.assign(responsesUtilsDependencies, defaultResponsesUtilsDependencies)
-  await closeUsageStore()
   Reflect.deleteProperty(process.env, DB_PATH_ENV)
 })
 
@@ -721,31 +744,22 @@ test("messages Messages flow records Copilot AIU from streaming message delta", 
     }),
   )
 
-  const response = await app.request("/", { method: "POST" })
+  const response = await withGatewayIdentity(() =>
+    app.request("/", { method: "POST" }),
+  )
   expect(response.status).toBe(200)
   await response.text()
 
-  const usageEvents = await getTokenUsageEventsPage({
-    page: 1,
-    pageSize: 10,
-    period: "today",
-  })
-
   expect(capturedMessagesPayload?.model).toBe("claude-sonnet-4.6")
-  expect(usageEvents.items).toHaveLength(1)
-  expect(usageEvents.items[0]).toMatchObject({
-    cache_creation_input_tokens: 10_612,
-    cache_read_input_tokens: 0,
-    cost: {
-      amount: 0.041199,
-      currency: "USD",
-      source: "copilot_aiu",
-      total_cost_nanos: 41_199_000,
-    },
-    input_tokens: 3,
+  expect(usageCapture.rows).toHaveLength(1)
+  expect(usageCapture.rows[0]).toMatchObject({
+    cacheCreationTokens: 10_612,
+    cacheReadTokens: 0,
+    inputTokens: 3,
     model: "claude-sonnet-4.6",
-    output_tokens: 93,
-    total_nano_aiu: 4_119_900_000,
+    outputTokens: 93,
+    downstreamProtocol: "anthropic",
+    providerType: "copilot",
   })
 })
 
@@ -1004,34 +1018,25 @@ test("messages Messages flow records Copilot AIU from non-streaming response", a
     model: "claude-sonnet-4.6",
   }
 
-  const response = await handleWithMessagesApi(createContext(), payload, {
-    logger,
-    requestId: "request-1",
-  })
+  const response = await withGatewayIdentity(() =>
+    handleWithMessagesApi(createContext(), payload, {
+      logger,
+      requestId: "request-1",
+    }),
+  )
   expect(response.status).toBe(200)
   await response.json()
 
-  const usageEvents = await getTokenUsageEventsPage({
-    page: 1,
-    pageSize: 10,
-    period: "today",
-  })
-
   expect(capturedMessagesPayload?.model).toBe("claude-sonnet-4.6")
-  expect(usageEvents.items).toHaveLength(1)
-  expect(usageEvents.items[0]).toMatchObject({
-    cache_creation_input_tokens: 200,
-    cache_read_input_tokens: 30,
-    cost: {
-      amount: 0.01,
-      currency: "USD",
-      source: "copilot_aiu",
-      total_cost_nanos: 10_000_000,
-    },
-    input_tokens: 12,
+  expect(usageCapture.rows).toHaveLength(1)
+  expect(usageCapture.rows[0]).toMatchObject({
+    cacheCreationTokens: 200,
+    cacheReadTokens: 30,
+    inputTokens: 12,
     model: "claude-sonnet-4.6",
-    output_tokens: 8,
-    total_nano_aiu: 1_000_000_000,
+    outputTokens: 8,
+    downstreamProtocol: "anthropic",
+    providerType: "copilot",
   })
 })
 

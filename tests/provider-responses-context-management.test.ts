@@ -11,7 +11,6 @@ import { modelsDevCatalogFixture } from "./fixtures/models-dev-catalog"
 
 let providerConfig: ResolvedProviderConfig | null = null
 
-const { closeUsageStore } = await import("~/lib/token-usage")
 const { responsesRoutes } = await import("~/routes/responses/route")
 const { providerResponsesRoutes } = await import(
   "~/routes/provider/responses/route"
@@ -98,9 +97,8 @@ const createApp = () => {
   return app
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   process.env[DB_PATH_ENV] = ":memory:"
-  await closeUsageStore()
 
   providerConfig = {
     apiKey: "provider-key",
@@ -130,7 +128,7 @@ beforeEach(async () => {
     fetchMock as unknown as typeof fetch
 })
 
-afterEach(async () => {
+afterEach(() => {
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch
   providerConfig = null
   Object.assign(
@@ -151,8 +149,6 @@ afterEach(async () => {
   )
   Object.assign(responsesUtilsDependencies, defaultResponsesUtilsDependencies)
   Object.assign(taskTitleDependencies, defaultTaskTitleDependencies)
-
-  await closeUsageStore()
   Reflect.deleteProperty(process.env, DB_PATH_ENV)
 })
 

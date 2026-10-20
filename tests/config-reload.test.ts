@@ -30,7 +30,9 @@ import type { CodexCredentials } from "~/lib/oauth/codex"
 import * as models from "~/services/copilot/models-cache"
 import * as vscode from "~/services/vscode-env"
 import { createServer } from "~/server"
+import { createManagedAuthenticator } from "~/users/managed-auth"
 import type { GetCopilotTokenResponse } from "~/services/github/get-copilot-token"
+import { createFakeKeysGateway } from "./fake-keys-gateway"
 
 const originalPaths = { appDir: PATHS.APP_DIR, configPath: PATHS.CONFIG_PATH }
 const setupCopilotToken = tokens.setupCopilotToken
@@ -258,34 +260,37 @@ describe("running server config reload", () => {
     expect(getConfig().providers?.["github-copilot"]?.enabled).toBe(false)
   })
 
-  test("authenticates rotation with the old admin key and then uses the new keys", async () => {
-    const app = createServer()
-    saveConfig({ auth: { apiKeys: ["new-api"], adminApiKey: "new-admin" } })
-    const reloaded = await app.request("/admin/config/reload", {
-      method: "POST",
-      headers: { "x-api-key": "old-admin" },
+  // NEW CONTRACT (post-strip): downstream client keys are no longer a static
+  // `auth.apiKeys` array that a config reload rotates. They live in
+  // `agent_gateway.client_keys` and are rotated by the gateway admin UI; the
+  // proxy picks a change up within the authenticator's short TTL. The two tests
+  // below lock that contract (the admin-endpoint key rotation is still covered
+  // by "rejects unauthenticated..." and "regenerates an emptied admin key").
+  test("rotates client keys within the authenticator TTL, honouring the old key until it expires", async () => {
+    const keys = createFakeKeysGateway([{ key: "old", userId: "u1" }])
+    let now = 1_000_000
+    spyOn(Date, "now").mockImplementation(() => now)
+    const authenticator = createManagedAuthenticator(keys, {
+      cacheTtlMs: 30_000,
     })
-    expect(reloaded.status).toBe(200)
-    expect(await reloaded.json()).toEqual({
-      configPath: PATHS.CONFIG_PATH,
-      reloaded: true,
-    })
-    const oldAdmin = await app.request("/admin/config/model-mappings", {
-      headers: { "x-api-key": "old-admin" },
-    })
-    expect(oldAdmin.status).toBe(401)
-    const newAdmin = await app.request("/admin/config/model-mappings", {
-      headers: { "x-api-key": "new-admin" },
-    })
-    expect(newAdmin.status).toBe(200)
-    const oldApi = await app.request("/unknown", {
-      headers: { "x-api-key": "old-api" },
-    })
-    expect(oldApi.status).toBe(401)
-    const newApi = await app.request("/unknown", {
-      headers: { "x-api-key": "new-api" },
-    })
-    expect(newApi.status).toBe(404)
+
+    expect((await authenticator.authenticate("old")).ok).toBe(true)
+
+    // The gateway admin rotates the key: "old" removed, "new" added.
+    keys.setKeys([{ key: "new", userId: "u1" }])
+
+    // The new key authenticates on its very first request — it was never cached
+    // as a miss.
+    expect((await authenticator.authenticate("new")).ok).toBe(true)
+
+    // The old key keeps working until its positive cache entry ages out.
+    expect((await authenticator.authenticate("old")).ok).toBe(true)
+
+    // Past the TTL the old key is re-checked against client_keys and rejected.
+    now += 30_001
+    const afterTtl = await authenticator.authenticate("old")
+    expect(afterTtl.ok).toBe(false)
+    expect(afterTtl.ok ? 0 : afterTtl.status).toBe(401)
   })
 
   test("rejects unauthenticated and ordinary API keys on the reload endpoint", async () => {
@@ -312,15 +317,24 @@ describe("running server config reload", () => {
     expect(getConfig().auth?.adminApiKey).toMatch(/^[a-f0-9]{64}$/)
   })
 
-  test("keeps a network listener authenticated after all regular keys are cleared", async () => {
-    const app = createServer({ networkExposed: true })
-    saveConfig({ auth: { apiKeys: [], adminApiKey: "old-admin" } })
-    const response = await app.request("/admin/config/reload", {
-      method: "POST",
-      headers: { "x-api-key": "old-admin" },
+  test("never caches a negative client-key lookup, so a late-added key works at once", async () => {
+    const keys = createFakeKeysGateway([])
+    const authenticator = createManagedAuthenticator(keys, {
+      cacheTtlMs: 30_000,
     })
-    expect(response.status).toBe(200)
-    expect((await app.request("/unknown")).status).toBe(401)
+
+    const first = await authenticator.authenticate("ghost")
+    expect(first.ok).toBe(false)
+    expect(first.ok ? 0 : first.status).toBe(401)
+    expect(keys.calls).toBe(1)
+
+    // The gateway admin adds the key a moment later — well inside the TTL.
+    keys.setKeys([{ key: "ghost", userId: "u2" }])
+
+    const second = await authenticator.authenticate("ghost")
+    expect(second.ok).toBe(true)
+    // The backend was consulted again: the 401 was never cached.
+    expect(keys.calls).toBe(2)
   })
 
   test("does not apply a stale token after its refresh loop is stopped", async () => {

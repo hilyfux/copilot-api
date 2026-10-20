@@ -5,7 +5,10 @@
 #   - OpenAI     POST /v1/chat/completions   (non-stream + SSE stream)
 #   - Anthropic  POST /v1/messages           (non-stream + SSE stream)
 #   - GET  /v1/models
-#   - gateway API-key auth (401 without a key, 200 with one)
+#   - the auth boundary: post-strip, downstream auth is OWNED by agent-gateway.
+#     With a gateway configured the proxy rejects an unauthenticated request
+#     (401); on loopback with no gateway it serves unauthenticated BY DESIGN and
+#     announces it at startup. The check below adapts to whichever mode is live.
 # against a stub OpenAI-compatible upstream, so the HTTP surface can be
 # verified with no GitHub Copilot credentials and no network egress.
 #
@@ -102,12 +105,28 @@ for _ in $(seq 1 50); do
 done
 
 # ── server under test ───────────────────────────────────────────────────────
-( cd "$ROOT" && COPILOT_API_HOME="$HOME_DIR" bun run ./src/main.ts start \
+# Fail fast if the port is already held. Otherwise the readiness probe below
+# would bind every assertion to a FOREIGN server already on this port — a false
+# green that is easy to miss (the probe only checks GET / answers).
+if (exec 3<>"/dev/tcp/127.0.0.1/$SERVER_PORT") 2>/dev/null; then
+  exec 3>&- 3<&-
+  echo "port $SERVER_PORT is already in use; refusing to test a foreign server." >&2
+  echo "set SMOKE_SERVER_PORT to a free port, or stop the process holding it." >&2
+  exit 1
+fi
+
+# `exec` so the backgrounded PID IS the bun server (not a wrapping subshell),
+# otherwise the cleanup kill misses the real process and leaks a listener that
+# collides with the next run.
+( cd "$ROOT" && exec env COPILOT_API_HOME="$HOME_DIR" bun run ./src/main.ts start \
     --port "$SERVER_PORT" --host 127.0.0.1 >"$HOME_DIR/server.log" 2>&1 ) &
 SRV_PID=$!
 
 READY=0
 for _ in $(seq 1 100); do
+  # If our own process died (e.g. EADDRINUSE lost a race), stop immediately
+  # rather than probing whatever else might answer on the port.
+  if ! kill -0 "$SRV_PID" 2>/dev/null; then break; fi
   if curl -sf -m 1 "http://127.0.0.1:$SERVER_PORT/" >/dev/null 2>&1; then READY=1; break; fi
   sleep 0.2
 done
@@ -126,10 +145,20 @@ echo "dual-protocol smoke (server $BASE, upstream 127.0.0.1:$UPSTREAM_PORT)"
 [[ "$(curl -s -m 5 "$BASE/")" == "Server running" ]] \
   && pass "GET / is alive" || fail "GET / is alive"
 
-# 2. auth enforced
-[[ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/v1/models")" == "401" ]] \
-  && pass "unauthenticated request is rejected with 401" \
-  || fail "unauthenticated request is rejected with 401"
+# 2. auth boundary — adapts to the configured mode (auth is gateway-owned now).
+if [[ -n "${GATEWAY_MYSQL_HOST:-}" ]]; then
+  [[ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/v1/models")" == "401" ]] \
+    && pass "gateway mode rejects an unauthenticated request with 401" \
+    || fail "gateway mode rejects an unauthenticated request with 401"
+else
+  CODE="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/v1/models")"
+  if [[ "$CODE" == "200" ]] \
+     && grep -q "unauthenticated (loopback only)" "$HOME_DIR/server.log"; then
+    pass "loopback mode serves without a gateway and announces it is unauthenticated"
+  else
+    fail "loopback mode serves without a gateway and announces it is unauthenticated (code=$CODE)"
+  fi
+fi
 
 # 3. model listing — provider-qualified ids are the contract here
 MODELS="$(curl -s -m 8 "${AUTH[@]}" "$BASE/v1/models")"

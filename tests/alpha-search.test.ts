@@ -11,7 +11,6 @@ let modelMappings: Record<string, string> = {}
 
 const { state } = await import("~/lib/state")
 const { HTTPError } = await import("~/lib/error")
-const { closeUsageStore } = await import("~/lib/token-usage")
 const { forwardCodexAlphaSearch, resolveCodexAlphaSearchUrl } = await import(
   "~/services/codex/alpha-search"
 )
@@ -222,9 +221,8 @@ const resolveTestProviderType = (
   model: string,
 ) => providerConfig.models?.[model]?.type ?? providerConfig.type
 
-beforeEach(async () => {
+beforeEach(() => {
   process.env[DB_PATH_ENV] = ":memory:"
-  await closeUsageStore()
 
   alphaSearchCodexPriorityEnabled = true
   modelMappings = {}
@@ -295,8 +293,7 @@ beforeEach(async () => {
     fetchMock as unknown as typeof fetch
 })
 
-afterEach(async () => {
-  await closeUsageStore()
+afterEach(() => {
   Reflect.deleteProperty(process.env, DB_PATH_ENV)
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch
   state.codexAccessToken = undefined

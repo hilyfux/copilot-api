@@ -1,13 +1,14 @@
 import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
-import { readFileSync } from "node:fs"
 
 import {
   createAuthMiddleware,
   getConfiguredAdminApiKeys,
 } from "./lib/request-auth"
 import { traceIdMiddleware } from "./lib/trace"
+import type { ManagedAuthenticator } from "./users/managed-auth"
+import { createManagedAuthMiddleware } from "./users/managed-auth-middleware"
 import { alphaSearchRoutes } from "./routes/alpha-search/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { configRoutes } from "./routes/admin/config/route"
@@ -21,12 +22,15 @@ import { providerMessageRoutes } from "./routes/provider/messages/route"
 import { providerModelRoutes } from "./routes/provider/models/route"
 import { providerResponsesRoutes } from "./routes/provider/responses/route"
 import { responsesRoutes } from "./routes/responses/route"
-import { tokenUsageRoute } from "./routes/token-usage/route"
 import { usageRoute } from "./routes/usage/route"
 import { videoRoutes } from "./routes/videos/route"
 export interface CreateServerOptions {
   networkExposed?: boolean
-  getApiKeys?: () => Array<string>
+  /**
+   * Authenticates downstream client keys against agent-gateway.
+   * `null` = standalone mode (no gateway database configured).
+   */
+  authenticator?: ManagedAuthenticator | null
 }
 
 function resolveSameOriginCorsOrigin(
@@ -55,11 +59,8 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   )
   server.use(
     "*",
-    createAuthMiddleware({
-      getApiKeys: options.getApiKeys,
-      allowUnauthenticatedPaths: ["/", "/usage-viewer", "/usage-viewer/"],
-      shouldSkipPath: (path) => path.startsWith("/admin/"),
-      allowWhenNoApiKeys: !networkExposed,
+    createManagedAuthMiddleware(options.authenticator ?? null, {
+      allowUnauthenticatedPaths: ["/"],
     }),
   )
   server.use(
@@ -72,18 +73,12 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   )
 
   server.get("/", (c) => c.text("Server running"))
-  server.get("/usage-viewer", (c) => {
-    const usageViewerFileUrl = new URL("../pages/index.html", import.meta.url)
-    return c.html(readFileSync(usageViewerFileUrl, "utf8"))
-  })
-  server.get("/usage-viewer/", (c) => c.redirect("/usage-viewer", 301))
 
   server.route("/chat/completions", completionRoutes)
   server.route("/admin/config", configRoutes)
   server.route("/models", modelRoutes)
   server.route("/embeddings", embeddingRoutes)
   server.route("/usage", usageRoute)
-  server.route("/token-usage", tokenUsageRoute)
   server.route("/responses", responsesRoutes)
   server.route("/alpha/search", alphaSearchRoutes)
   server.route("/images", imageRoutes)
