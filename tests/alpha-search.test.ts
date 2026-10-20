@@ -1307,11 +1307,16 @@ describe("Alpha search Responses adapter", () => {
     const missingAuth = await requestFallback(
       createFallbackPayload({ search_query: [{ q: "auth" }] }),
     )
-    expect(missingAuth.status).toBe(500)
+    // A missing credential is a configuration state, not a server fault: the
+    // shared error funnel answers 503 service_unavailable with an operator
+    // instruction (see tests/missing-credential-status.test.ts). It used to be
+    // 500, which invited retries and hid the misconfiguration from gates.
+    expect(missingAuth.status).toBe(503)
     const missingAuthBody = (await missingAuth.json()) as {
-      error: { message: string }
+      error: { type: string; message: string }
     }
-    expect(missingAuthBody.error.message).toContain("Copilot token not found")
+    expect(missingAuthBody.error.type).toBe("service_unavailable")
+    expect(missingAuthBody.error.message).toContain("Copilot account")
 
     alphaSearchResponsesDependencies.createResponses = (() =>
       Promise.reject(

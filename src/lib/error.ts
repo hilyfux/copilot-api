@@ -59,6 +59,26 @@ export async function forwardError(
     })
   }
 
+  // No credential is a CONFIGURATION state: the proxy is up and the route
+  // exists, a prerequisite is missing. Answering 500 tells the caller to retry
+  // a request that will fail identically until a human imports an account, and
+  // it makes a misconfigured proxy indistinguishable from a healthy one to any
+  // monitor or deploy gate comparing 5xx baselines. Mapped here, in the single
+  // error funnel, so routes added later inherit it.
+  if (error instanceof Error && error.message === "Copilot token not found") {
+    consola.warn("No Copilot credential configured — request refused (503)")
+    return c.json(
+      {
+        error: {
+          type: "service_unavailable",
+          message:
+            "No Copilot account is configured with an access token. Import one in the gateway admin (providers → GitHub Copilot → add account), then retry.",
+        },
+      },
+      503,
+    )
+  }
+
   consola.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
