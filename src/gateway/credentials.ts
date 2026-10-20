@@ -17,8 +17,11 @@
  * table/column names. Responsibility is deliberately narrow: read the GitHub
  * token for a copilot-family account — nothing else.
  *
- * Selection (铁律 4 并发 / 铁律 6 扩展): when more than one copilot account
- * carries a usable token the least-recently-used one is chosen
+ * Selection (铁律 4 并发 / 铁律 6 扩展): only NON-disabled copilot accounts are
+ * eligible — the WHERE adds `disabled_at IS NULL` (readable via mig 169's
+ * column grant), so a disabled account's token is never exchanged. When more
+ * than one eligible copilot account carries a usable token the
+ * least-recently-used one is chosen
  * (`last_proxy_use_at` ascending, a never-used account first), with `id` as the
  * deterministic tiebreak. That is the same least-loaded convention the fleet
  * uses to spread upstream load, and it is stable for any given row set, so the
@@ -50,21 +53,24 @@ type AccountRow = {
   id: string
   access_token: string | null
   last_proxy_use_at: Date | string | null
+  disabled_at: Date | string | null
 }
 
 const SELECT_COPILOT_ACCOUNTS = `
-  SELECT id, access_token, last_proxy_use_at
+  SELECT id, access_token, last_proxy_use_at, disabled_at
     FROM v_proxy_accounts_v1
    WHERE provider_type = ?
      AND access_token IS NOT NULL
-     AND access_token <> ''`
+     AND access_token <> ''
+     AND disabled_at IS NULL`
 
 const SELECT_COPILOT_ACCOUNTS_LEGACY = `
-  SELECT id, access_token, last_proxy_use_at
+  SELECT id, access_token, last_proxy_use_at, disabled_at
     FROM provider_accounts
    WHERE provider_type = ?
      AND access_token IS NOT NULL
-     AND access_token <> ''`
+     AND access_token <> ''
+     AND disabled_at IS NULL`
 
 /** MySQL error codes that mean "this view does not exist / is not granted here". */
 const MISSING_VIEW_ERRNOS = new Set([1146, 1142])
@@ -101,6 +107,12 @@ function pickLeastRecentlyUsed(rows: readonly AccountRow[]): AccountRow | null {
     // The SQL already filters empty tokens, but a legacy base-table row or a
     // view that drops the filter must never yield an empty credential.
     if (!row.access_token || row.access_token.trim() === "") {
+      continue
+    }
+    // Same defensive posture for the disabled filter: the SQL already drops
+    // `disabled_at IS NOT NULL` rows, but a disabled account's token must never
+    // be selected even if a legacy/looser query path were to return one.
+    if (row.disabled_at !== null && row.disabled_at !== undefined) {
       continue
     }
     if (chosen === null || isLessLoaded(row, chosen)) {

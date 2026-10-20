@@ -165,6 +165,73 @@ describe("credentials gateway", () => {
     expect(await selectCopilotGitHubToken(db)).toBeNull()
   })
 
+  test("the WHERE filters disabled accounts (disabled_at IS NULL) on view and base table", async () => {
+    const { db, calls } = fakeDb((sql) => {
+      if (usesView(sql)) {
+        throw Object.assign(new Error("missing view"), { errno: 1146 })
+      }
+      return [{ id: "acc-9", access_token: "tok-9", last_proxy_use_at: null }]
+    })
+
+    await selectCopilotGitHubToken(db)
+
+    // Both the versioned view and the base-table fallback must carry the clause,
+    // so a disabled account's token is dropped DB-side (mig 169 grants the column).
+    expect(usesView(calls[0].sql)).toBe(true)
+    expect(calls[0].sql).toContain("disabled_at IS NULL")
+    expect(usesBaseTable(calls[1].sql)).toBe(true)
+    expect(calls[1].sql).toContain("disabled_at IS NULL")
+  })
+
+  test("a disabled account's token is never selected; the non-disabled one wins", async () => {
+    // acc-disabled has the OLDEST last_proxy_use_at, so it would win the LRU pick
+    // if it were eligible — but disabled_at is set, so it must be skipped and the
+    // non-disabled acc-live chosen. (Defends the DB-side filter in JS too.)
+    const rows = [
+      {
+        id: "acc-disabled",
+        access_token: "tok-disabled",
+        last_proxy_use_at: new Date("2026-10-10T10:00:00Z"),
+        disabled_at: new Date("2026-10-15T10:00:00Z"),
+      },
+      {
+        id: "acc-live",
+        access_token: "tok-live",
+        last_proxy_use_at: new Date("2026-10-19T10:00:00Z"),
+        disabled_at: null,
+      },
+    ]
+    const { db } = fakeDb(() => rows)
+
+    const credential = await selectCopilotGitHubToken(db)
+
+    expect(credential).toEqual({
+      accountId: "acc-live",
+      githubToken: "tok-live",
+    })
+  })
+
+  test("all copilot accounts disabled → null (idle), never a throw", async () => {
+    const rows = [
+      {
+        id: "acc-a",
+        access_token: "tok-a",
+        last_proxy_use_at: null,
+        disabled_at: new Date("2026-10-18T10:00:00Z"),
+      },
+      {
+        id: "acc-b",
+        access_token: "tok-b",
+        last_proxy_use_at: new Date("2026-10-19T10:00:00Z"),
+        disabled_at: new Date("2026-10-19T12:00:00Z"),
+      },
+    ]
+    const { db } = fakeDb(() => rows)
+
+    // null is the idle signal the caller turns into a clean file/env fallback.
+    expect(await selectCopilotGitHubToken(db)).toBeNull()
+  })
+
   test("the port wrapper delegates to the reader over the pool", async () => {
     const { db } = fakeDb(() => [
       { id: "acc-1", access_token: "tok", last_proxy_use_at: null },
