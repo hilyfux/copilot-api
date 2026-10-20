@@ -41,7 +41,8 @@
     "start": "NODE_USE_SYSTEM_CA=1 NODE_ENV=production bun run ./src/main.ts",
     "typecheck": "tsc",
     "typecheck:all": "bun run typecheck && bun run --cwd desktop typecheck",
-    "typecheck:desktop": "bun run --cwd desktop typecheck"
+    "typecheck:desktop": "bun run --cwd desktop typecheck",
+    "test": "bun test ./tests"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
