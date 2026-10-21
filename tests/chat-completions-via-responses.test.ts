@@ -318,6 +318,35 @@ describe("translator: responses → chat result", () => {
     })
   })
 
+  // Live azure 2026-10-21: chat/completions with max_tokens=10 → upstream 400
+  // "Invalid 'max_output_tokens': ... Expected a value >= 16". The Responses API
+  // floor is 16; a client asking for fewer must still get an answer.
+  test("max_tokens below the Responses floor (16) is raised to 16, larger values untouched", () => {
+    const base = {
+      model: "gpt-6-luna",
+      messages: [{ role: "user" as const, content: "hi" }],
+    }
+    expect(
+      translateChatToResponsesPayload({ ...base, max_tokens: 10 })
+        .max_output_tokens,
+    ).toBe(16)
+    expect(
+      translateChatToResponsesPayload({ ...base, max_completion_tokens: 1 })
+        .max_output_tokens,
+    ).toBe(16)
+    expect(
+      translateChatToResponsesPayload({ ...base, max_tokens: 16 })
+        .max_output_tokens,
+    ).toBe(16)
+    expect(
+      translateChatToResponsesPayload({ ...base, max_tokens: 500 })
+        .max_output_tokens,
+    ).toBe(500)
+    expect(
+      translateChatToResponsesPayload(base).max_output_tokens,
+    ).toBeUndefined()
+  })
+
   test("incomplete(max_output_tokens) → length", () => {
     const r = translateResponsesResultToChatCompletion(
       responsesResult({

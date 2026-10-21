@@ -235,6 +235,9 @@ function translateResponseFormat(
   return undefined
 }
 
+/** Upstream Responses API floor for max_output_tokens. */
+export const RESPONSES_MIN_OUTPUT_TOKENS = 16
+
 export function translateChatToResponsesPayload(
   payload: ChatCompletionsPayload,
 ): ResponsesPayload {
@@ -256,7 +259,9 @@ export function translateChatToResponsesPayload(
   }
   if (typeof payload.top_p === "number") out.top_p = payload.top_p
   if (typeof maxOutput === "number" && maxOutput > 0) {
-    out.max_output_tokens = maxOutput
+    // Responses API rejects max_output_tokens < 16 (live 400 2026-10-21); a
+    // chat client asking for fewer still gets an answer instead of an error.
+    out.max_output_tokens = Math.max(RESPONSES_MIN_OUTPUT_TOKENS, maxOutput)
   }
   if (tools && tools.length > 0) {
     out.tools = tools
