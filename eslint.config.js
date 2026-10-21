@@ -14,7 +14,13 @@ export default defineConfig(
   // `.claude/**` holds agent tooling copied from agent-gateway (skills, hooks).
   // It is not application source and is not part of this project's tsconfig, so
   // the typed parser cannot resolve it — linting it only produces noise.
-  { ignores: ["plugin/**", "desktop/**", ".claude/**"] },
+  // `src/contracts-pkg/**` is the agent-gateway contract package, vendored
+  // byte-for-byte by `bun scripts/sync-contracts.ts --into ../copilot-api` and
+  // pinned by tests/contracts-pkg-manifest.test.ts — reformatting it would break
+  // the manifest digests, so it is never linted/fixed here.
+  {
+    ignores: ["plugin/**", "desktop/**", ".claude/**", "src/contracts-pkg/**"],
+  },
   { linterOptions: { reportUnusedDisableDirectives: "off" } },
   gitignore(),
   eslint.configs.recommended,

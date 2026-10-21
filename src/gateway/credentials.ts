@@ -160,6 +160,31 @@ export async function selectCopilotGitHubToken(
   return { accountId: chosen.id, githubToken: chosen.access_token }
 }
 
+/**
+ * Every eligible copilot credential, least-recently-used first (the same
+ * order `selectCopilotGitHubToken` picks from). The credential refresher uses
+ * the full list so it can skip a token GitHub rejected and move to the next
+ * eligible account without another round trip.
+ */
+export async function selectCopilotCredentials(
+  db: Queryable,
+): Promise<CopilotCredential[]> {
+  const rows = (await queryCopilotAccounts(db)).filter(
+    (row) =>
+      Boolean(row.access_token && row.access_token.trim() !== "")
+      && (row.disabled_at === null || row.disabled_at === undefined),
+  )
+  rows.sort((a, b) =>
+    isLessLoaded(a, b) ? -1
+    : isLessLoaded(b, a) ? 1
+    : 0,
+  )
+  return rows.map((row) => ({
+    accountId: row.id,
+    githubToken: row.access_token as string,
+  }))
+}
+
 export type CredentialsGateway = {
   /**
    * The GitHub token of the least-loaded copilot account, or `null` when none
@@ -167,10 +192,15 @@ export type CredentialsGateway = {
    * fault rejects so the caller can fall back to its local source.
    */
   readCopilotGitHubToken(): Promise<CopilotCredential | null>
+  /** All eligible credentials, LRU first. A DB fault rejects. */
+  listCopilotGitHubTokens(): Promise<CopilotCredential[]>
 }
 
 export function createCredentialsGateway(
   pool: GatewayPool,
 ): CredentialsGateway {
-  return { readCopilotGitHubToken: () => selectCopilotGitHubToken(pool) }
+  return {
+    readCopilotGitHubToken: () => selectCopilotGitHubToken(pool),
+    listCopilotGitHubTokens: () => selectCopilotCredentials(pool),
+  }
 }

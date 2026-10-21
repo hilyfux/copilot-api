@@ -11,6 +11,7 @@ import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { isAsyncIterable } from "~/lib/utils"
 import { createMessages } from "~/services/copilot/create-messages"
+import { upstreamRecoveryDependencies } from "~/services/copilot/upstream-recovery"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 
 const originalFetch = globalThis.fetch
@@ -392,12 +393,25 @@ describe("Standard Copilot Messages request compatibility", () => {
   })
 
   test("preserves upstream HTTP errors", async () => {
+    // A `forbidden` 403 is retried once after a back-off (transient bursts,
+    // operator report 2026-08); a persistent one still surfaces as HTTPError.
+    const savedSleep = upstreamRecoveryDependencies.sleep
+    upstreamRecoveryDependencies.sleep = () => Promise.resolve()
     fetchMock.mockImplementationOnce(() =>
       Promise.resolve(new Response("forbidden", { status: 403 })),
     )
-    const error = await getRejectedError(
-      createMessages(createPayload(), undefined, { requestId: "request-1" }),
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(new Response("forbidden", { status: 403 })),
     )
-    expect(error).toBeInstanceOf(HTTPError)
+    const callsBefore = fetchMock.mock.calls.length
+    try {
+      const error = await getRejectedError(
+        createMessages(createPayload(), undefined, { requestId: "request-1" }),
+      )
+      expect(error).toBeInstanceOf(HTTPError)
+      expect(fetchMock.mock.calls.length - callsBefore).toBe(2)
+    } finally {
+      upstreamRecoveryDependencies.sleep = savedSleep
+    }
   })
 })

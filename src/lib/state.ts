@@ -5,8 +5,15 @@ import type { ModelsResponse } from "~/lib/types/models"
 export interface State {
   githubToken?: string
   githubTokenSource?: "cli" | "gateway" | "env" | "file"
+  /**
+   * agent-gateway provider_accounts.id whose GitHub token is installed; set
+   * only for a gateway-sourced credential (see lib/serving-account.ts).
+   */
+  copilotGatewayAccountId?: string
   userName?: string
   copilotToken?: string
+  /** Local ms after which the ephemeral Copilot token is refreshed before use. */
+  copilotTokenStaleAt?: number
   codexAccessToken?: string
   codexRefreshToken?: string
   codexExpiresAt?: number

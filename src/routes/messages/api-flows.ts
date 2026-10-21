@@ -12,6 +12,7 @@ import { GITHUB_COPILOT_PROVIDER } from "~/lib/github-copilot-provider"
 import { debugJson, debugJsonTail, debugLazy } from "~/lib/logger"
 import { getProviderModelPdfSupport } from "~/lib/model-pdf-support"
 import { writeSSEIfConnected } from "~/lib/sse"
+import { isUpstreamRefusal, noteUpstreamRefusal } from "~/lib/upstream-refusal"
 import { resolveBridgeToolSearchName } from "~/lib/tool-search"
 import {
   createCopilotTokenUsageRecorder,
@@ -414,6 +415,7 @@ export const handleWithMessagesApi = async (
       let usage: UsageTokens = {}
       let messageStopSeen = false
       let errorSeen = false
+      let refusalSeen = false
 
       try {
         for await (const event of response) {
@@ -437,6 +439,9 @@ export const handleWithMessagesApi = async (
               ...normalizeAnthropicUsage(parsedEvent.usage),
               ...normalizeCopilotUsage(parsedEvent.copilot_usage),
             })
+            if (isUpstreamRefusal(parsedEvent.delta.stop_reason)) {
+              refusalSeen = true
+            }
           }
           if (
             parsedEvent?.type === "message_stop"
@@ -466,6 +471,13 @@ export const handleWithMessagesApi = async (
         })
       }
 
+      if (refusalSeen) {
+        noteUpstreamRefusal({
+          model: anthropicPayload.model,
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+        })
+      }
       recordUsage(usage)
     })
   }
@@ -474,6 +486,13 @@ export const handleWithMessagesApi = async (
     value: response,
     tailLength: 400,
   })
+  if (isUpstreamRefusal(response.stop_reason)) {
+    noteUpstreamRefusal({
+      model: anthropicPayload.model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    })
+  }
   recordUsage({
     ...normalizeAnthropicUsage(response.usage),
     ...normalizeCopilotUsage(response.copilot_usage),

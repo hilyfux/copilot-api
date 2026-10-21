@@ -39,6 +39,7 @@ import {
 } from "~/services/responses-websocket-helpers"
 import { createResponsesHttpEventStream } from "~/services/responses-http"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
+import { sendCopilotUpstream } from "~/services/copilot/upstream-recovery"
 
 interface ResponsesRequestOptions {
   vision: boolean
@@ -109,18 +110,20 @@ const createHttpResponses = async (
   clientSignal?: AbortSignal,
 ): Promise<CreateResponsesReturn> => {
   const transportConfig = getUpstreamTransportConfig()
-  const response = await fetchUpstreamWithLifecycle(
-    `${copilotBaseUrl(state)}/responses`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    },
-    {
-      clientSignal,
-      headersTimeoutMs: transportConfig.headersTimeoutMs,
-      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-    },
+  const response = await sendCopilotUpstream(headers, () =>
+    fetchUpstreamWithLifecycle(
+      `${copilotBaseUrl(state)}/responses`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      },
+      {
+        clientSignal,
+        headersTimeoutMs: transportConfig.headersTimeoutMs,
+        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+      },
+    ),
   )
 
   logCopilotRateLimits(response.headers)

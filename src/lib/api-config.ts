@@ -160,7 +160,23 @@ const EDITOR_WEBSOCKET_PLUGIN_VERSION = `copilot-chat/${COPILOT_WEBSOCKET_VERSIO
 const API_VERSION = "2026-08-01"
 const WEBSOCKET_API_VERSION = API_VERSION
 
+/**
+ * Operator pin for the Copilot API host (env COPILOT_API_BASE_URL, e.g.
+ * https://api.business.githubcopilot.com). Unset = keep the token exchange's
+ * `endpoints.api` (the default). The token's host was measured flipping
+ * between values, one of which answered 421 for every POST.
+ */
+export const getPinnedCopilotApiUrl = (
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined => {
+  const pinned = env.COPILOT_API_BASE_URL?.trim().replace(/\/+$/, "")
+  return pinned && /^https:\/\//.test(pinned) ? pinned : undefined
+}
+
 export const copilotBaseUrl = (state: State) => {
+  const pinned = getPinnedCopilotApiUrl()
+  if (pinned) return pinned
+
   const enterpriseDomain = getEnterpriseDomain()
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`

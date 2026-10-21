@@ -46,7 +46,8 @@ afterEach(() => {
 test("builds refresh deadline from refresh_in and local time", () => {
   const nowMs = 1_000_000
 
-  expect(getRefreshDeadlineMs(1_800, nowMs)).toBe(nowMs + 1_740_000)
+  // pre-refresh 5 min before refresh_in (~10 min before a 30 min expiry)
+  expect(getRefreshDeadlineMs(1_800, nowMs)).toBe(nowMs + 1_500_000)
 })
 
 test("clamps refresh deadline to avoid a hot loop", () => {

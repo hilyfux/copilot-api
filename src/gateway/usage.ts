@@ -10,26 +10,22 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise"
 
+import type { UsageEvent } from "~/contracts-pkg/usage/usage-event"
+
 import type { GatewayConnection, GatewayPool } from "./db"
 import { selectClientKeysByHash } from "./keys"
 
-/** One usage_events row. Column order is fixed by the INSERT below. */
-export type UsageEventRow = {
-  requestId: string
-  occurredAt: Date
-  keyHash: string
-  userId: string | null
-  providerType: string
-  accountId: string | null
-  sessionId: string | null
-  model: string | null
-  inputTokens: number
-  cacheReadTokens: number
-  cacheCreationTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  durationMs: number | null
-  statusCode: number | null
+/**
+ * One usage_events row. Derived from the contract package's `UsageEvent`
+ * (agent-gateway src/contracts-pkg/usage/usage-event.ts — the authority), so
+ * a contract change reaches this proxy through `sync-contracts`, not by hand.
+ * The three columns this proxy always writes are tightened from optional to
+ * required. Column order is fixed by the INSERT below.
+ */
+export type UsageEventRow = Omit<
+  UsageEvent,
+  "ratelimitHeaders" | "networkRegion" | "servedModel" | "downstreamProtocol"
+> & {
   networkRegion: string | null
   /** mig 120. null when the request was served by the requested model as-is. */
   servedModel: string | null

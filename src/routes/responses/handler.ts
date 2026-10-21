@@ -7,7 +7,7 @@ import {
   resolveMappedModel,
 } from "~/lib/config"
 import { createHandlerLogger, debugJson, debugJsonTail } from "~/lib/logger"
-import { findEndpointModel } from "~/lib/models"
+import { findEndpointModel, toCopilotUpstreamModelId } from "~/lib/models"
 import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import { requestContext } from "~/lib/request-context"
 import { writeSSEIfConnected } from "~/lib/sse"
@@ -35,6 +35,7 @@ import type {
   ResponseStreamEvent,
 } from "~/lib/types/responses"
 import { createResponses as createCopilotResponses } from "~/services/copilot/create-responses"
+import { admitCopilotModel } from "~/policy/model-admission"
 
 import { handleResponsesViaMessages } from "./messages-handler"
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
@@ -85,6 +86,11 @@ export const handleResponses = async (c: Context) => {
     })
   }
 
+  // Gateway model catalog + routing strategy (agent-gateway mig 171).
+  const admission = admitCopilotModel(requestedModel)
+  if (!admission.ok) return c.json(admission.body, admission.status)
+  if (admission.model !== requestedModel) payload.model = admission.model
+
   const taskTitleModel = getCodexTaskTitleModel(
     c.req.header("user-agent"),
     payload.input,
@@ -119,7 +125,7 @@ export const handleResponses = async (c: Context) => {
   const selectedModel = responsesHandlerDependencies.findEndpointModel(
     payload.model,
   )
-  payload.model = selectedModel?.id ?? payload.model
+  payload.model = selectedModel?.id ?? toCopilotUpstreamModelId(payload.model)
   const normalizedReasoningEffort = normalizeResponsesReasoningEffort(
     payload,
     selectedModel?.capabilities?.supports?.reasoning_effort,

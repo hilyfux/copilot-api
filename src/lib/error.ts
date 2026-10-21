@@ -83,12 +83,31 @@ export async function forwardError(
 
   if (error instanceof HTTPError) {
     if (error.response.status === 429) {
+      let hasRetryAfter = false
       for (const [name, value] of error.response.headers) {
         const lowerName = name.toLowerCase()
         if (lowerName === "retry-after" || lowerName.startsWith("x-")) {
           c.header(name, value)
+          if (lowerName === "retry-after") hasRetryAfter = true
         }
       }
+      // Copilot's 429 is plain text with no Retry-After / x-ratelimit headers
+      // (operator report 2026-08): synthesise one so clients back off instead
+      // of hammering, and answer in the fleet's JSON rate-limit shape.
+      if (!hasRetryAfter) {
+        c.header("Retry-After", String(SYNTHETIC_RETRY_AFTER_SECONDS))
+      }
+      const text = await error.response.text()
+      return c.json(
+        {
+          type: "error",
+          error: {
+            type: "rate_limit_error",
+            message: rateLimitMessage(text),
+          },
+        },
+        429,
+      )
     }
 
     const errorText = await error.response.text()
@@ -119,6 +138,24 @@ export async function forwardError(
     },
     500,
   )
+}
+
+/** Seconds a client is told to wait when upstream 429 carries no Retry-After. */
+export const SYNTHETIC_RETRY_AFTER_SECONDS = 30
+
+/** Upstream 429 text (JSON or plain) → one readable message. */
+function rateLimitMessage(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: { message?: unknown }
+      message?: unknown
+    }
+    const message = parsed.error?.message ?? parsed.message
+    if (typeof message === "string" && message.trim()) return message
+  } catch {
+    // plain-text body (the observed Copilot shape)
+  }
+  return text.trim() || "Upstream rate limit reached. Please retry later."
 }
 
 const isAbortError = (error: unknown): boolean =>

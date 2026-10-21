@@ -42,6 +42,20 @@ export const findEndpointModel = (sdkModelId: string): Model | undefined => {
 }
 
 /**
+ * The id to send upstream when the model is NOT in the upstream model list.
+ * Copilot only accepts DOTTED Claude versions (`claude-sonnet-4.6` ✓,
+ * `claude-sonnet-4-6` → 400, operator report 2026-08), so a hyphenated /
+ * dated Claude id with no strategy rule and no metadata match is normalised
+ * defensively; every other id is returned unchanged.
+ */
+export const toCopilotUpstreamModelId = (modelId: string): string => {
+  const normalized = normalizeSdkModelId(modelId)
+  return normalized ?
+      `claude-${normalized.family}-${normalized.version}`
+    : modelId
+}
+
+/**
  * Normalizes an SDK model ID to extract the model family and version.
  * this method from github copilot extension
  * Examples:

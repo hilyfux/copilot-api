@@ -21,6 +21,10 @@ import {
 import { resolveProviderConfig } from "~/lib/provider-resolver"
 import { getProviderAgentModels } from "~/lib/provider-management"
 import { state } from "~/lib/state"
+import {
+  currentCatalog,
+  selectAdvertisedCopilotModels,
+} from "~/models/advertised-models"
 import type { Model } from "~/lib/types/models"
 import { getModels as getCodexModels } from "~/services/codex/get-models"
 import { forwardProviderModels } from "~/services/providers/provider-proxy"
@@ -217,7 +221,15 @@ interface ModelSelectors {
 }
 
 export function getCopilotModelRecords(): Array<Model> {
-  return isGitHubCopilotEnabled() ? (state.models?.data ?? []) : []
+  if (!isGitHubCopilotEnabled()) return []
+  const upstream = state.models?.data ?? []
+  // agent-gateway model_catalog (provider_type='copilot') is the advertised
+  // list when readable; unavailable (no gateway / view missing / no rows) →
+  // the raw upstream list, exactly as before.
+  const catalog = currentCatalog()
+  return catalog ?
+      selectAdvertisedCopilotModels(catalog.advertised, upstream)
+    : upstream
 }
 
 export function getModelsById(

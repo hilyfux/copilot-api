@@ -1,0 +1,126 @@
+{
+  "contractMajor": 1,
+  "contractVersion": 2,
+  "contractMinCompat": 1,
+  "headerRule": ".ts：删第 1 行到第一个恰为 ' */' 的行（含）后 sha256；其它文件整文件 sha256",
+  "files": {
+    "billing/billing-decision.ts": {
+      "sha256": "368a81a556bc9cff28cbff24c5f9478942923e736d6ca0ef933c2d18e785182c",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "billing/charge-preference.ts": {
+      "sha256": "3846cbbdad2715230d48af9af6100dc4b137faaed5ae3d3b670f5d7381ce6224",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "billing/d-gate.ts": {
+      "sha256": "916d4a9983117c94164ae9967dc4b8198587abd94bb045e0bac6833569dd43be",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "billing/windows.ts": {
+      "sha256": "5a976af7958132736dce84225fb486c319723819104872c371001b2eb4e4ea82",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "bridge/forward-error-classification.ts": {
+      "sha256": "891bd6b7e93b62afb1344bb52d81189807dae30fd2dead1bf8a3d4c16c3de600",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "bridge/forwarding-contract.ts": {
+      "sha256": "c76b9dc35f5a89c3ccdef3a955c981e2eec4ded10c5d01a33683efc32b1ef6b5",
+      "since": 2,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "bridge/quota-snapshot-contract.ts": {
+      "sha256": "e8dab056f2f05bd524878b6629dd92b383472243d27fbc2948506cb969ea0d91",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "bridge/region-egress-contract.ts": {
+      "sha256": "640d23406dff64dd62c29301d79ad33d61b568effb4f4db3674caf39597c3be8",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "bridge/registry-contract.ts": {
+      "sha256": "f3bbabc6fa54c467926a324350c9ce4571209d390ad1b0929b803b28cc33519d",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "db/column-probe.ts": {
+      "sha256": "95c93a444af1ea15c532cba630a59212e15112f817f271d150c20504d619d9d3",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "protocol/chat-tool-pairing.ts": {
+      "sha256": "4525e7ab210920f2e37852f679b7cbbdf6b86473932bb231219a5f08314a24cc",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "codex-api"
+    },
+    "protocol/model-name.ts": {
+      "sha256": "711d83ce6996c261fc01cab35884b9b8a6f4bc93987482fb1c0405dc4e581043",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "codex-api"
+    },
+    "protocol/vendor-openai-translate.ts": {
+      "sha256": "13dcf0a0bc904b3e9f7e0a6428606c38e227084d14c4c194b5281db3102f0dce",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "codex-api"
+    },
+    "redis/redis-channels.ts": {
+      "sha256": "2eb6b4e703afda83884dac2a0027aba665d6b20bdd2a165ed2605a4fc329f166",
+      "since": 2,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "region/region-aliases.ts": {
+      "sha256": "6957b4e60afa9b9d8d1ea537e9eba238cd8ff400622b31969b4faab384e2aec7",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "region/region-ports.ts": {
+      "sha256": "f60ff992ba43e1bb99ab1d3ce5f3862c28fb1bb66f90e157e3b35789ecbece2c",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "strategy/resolve.ts": {
+      "sha256": "8106175a825e7ed309a3353d87a9ddc699a6d7759a3fa3fef237279ea2e92c3d",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "codex-api"
+    },
+    "usage/usage-event.ts": {
+      "sha256": "42aaccfeac0b38206140d58c92f7bfd8588c5cc647241490e11e46dbb8e4025b",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    },
+    "vectors/d-gate.json": {
+      "sha256": "5636faa2184c4fa14ddc35c60eb7c16cc854da37c5828b7baf8e4769637e785e",
+      "since": 1,
+      "owner": "gateway",
+      "maintainer": "gateway"
+    }
+  },
+  "history": {
+    "1": "e4cdab9c3b8a2b6c6056d4b414945a944dff2aa743499fdc501bfc350a47bc6c",
+    "2": "525ec169426e8ce451ed272157a4a642c2109044b5a23bedad41a169a22c807c"
+  }
+}

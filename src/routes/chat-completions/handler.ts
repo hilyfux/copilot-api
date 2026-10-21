@@ -4,8 +4,13 @@ import type { Context } from "hono"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { resolveMappedModel } from "~/lib/config"
+import {
+  chatNeedsResponses,
+  isUnsupportedApiForModel,
+} from "~/lib/copilot-upstream-path"
+import { HTTPError } from "~/lib/error"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
-import { findEndpointModel } from "~/lib/models"
+import { findEndpointModel, toCopilotUpstreamModelId } from "~/lib/models"
 import { writeSSEIfConnected } from "~/lib/sse"
 import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import {
@@ -21,7 +26,10 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
 } from "~/lib/types/chat-completions"
+import { admitCopilotModel } from "~/policy/model-admission"
 import { createChatCompletions } from "~/services/copilot/create-chat-completions"
+
+import { handleChatViaResponses } from "./via-responses"
 
 const logger = createHandlerLogger("chat-completions-handler")
 
@@ -59,10 +67,16 @@ export async function handleCompletion(c: Context) {
     })
   }
 
+  // Gateway model catalog + routing strategy (agent-gateway mig 171): a
+  // model that is not enabled is refused here, with no upstream round trip.
+  const admission = admitCopilotModel(requestedModel)
+  if (!admission.ok) return c.json(admission.body, admission.status)
+  if (admission.model !== requestedModel) payload.model = admission.model
+
   debugJson(logger, "Request payload:", payload)
 
   const selectedModel = findEndpointModel(payload.model)
-  payload.model = selectedModel?.id ?? payload.model
+  payload.model = selectedModel?.id ?? toCopilotUpstreamModelId(payload.model)
 
   if (
     isNullish(payload.max_tokens)
@@ -94,11 +108,33 @@ export async function handleCompletion(c: Context) {
     model: payload.model,
   })
 
-  const response = await createChatCompletions(payload, {
-    clientSignal: c.req.raw.signal,
-    requestId,
-    sessionId,
-  })
+  const viaResponses = () =>
+    handleChatViaResponses(c, payload, { requestId, sessionId, recordUsage })
+
+  // GitHub serves gpt-5.x / gpt-6 / grok-4.5 only on /responses and answers
+  // /chat/completions with 400 unsupported_api_for_model. Decided from the
+  // upstream model metadata first (lib/copilot-upstream-path.ts).
+  if (chatNeedsResponses(payload.model, selectedModel)) {
+    return await viaResponses()
+  }
+
+  let response: Awaited<ReturnType<typeof createChatCompletions>>
+  try {
+    response = await createChatCompletions(payload, {
+      clientSignal: c.req.raw.signal,
+      requestId,
+      sessionId,
+    })
+  } catch (error) {
+    // Stale/missing metadata safety net: retry ONCE through Responses.
+    if (await isUnsupportedApiError(error)) {
+      logger.warn(
+        `chat/completions rejected ${payload.model} as unsupported_api_for_model; retrying once via /responses`,
+      )
+      return await viaResponses()
+    }
+    throw error
+  }
 
   if (isNonStreaming(response)) {
     debugJson(logger, "Non-streaming response:", response)
@@ -131,6 +167,17 @@ export async function handleCompletion(c: Context) {
 
     recordUsage(usage)
   })
+}
+
+async function isUnsupportedApiError(error: unknown): Promise<boolean> {
+  if (!(error instanceof HTTPError) || error.response.status !== 400) {
+    return false
+  }
+  try {
+    return isUnsupportedApiForModel(await error.response.clone().text())
+  } catch {
+    return false
+  }
 }
 
 const isNonStreaming = (

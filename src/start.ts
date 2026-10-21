@@ -25,7 +25,30 @@ import {
 import { state } from "./lib/state"
 import { configureTokenReloader } from "./lib/token-reload"
 import { configureUsageEmitter } from "./lib/token-usage"
-import { openGatewayFromEnv, type CredentialsGateway } from "./gateway"
+import {
+  openGatewayFromEnv,
+  type CopilotCredential,
+  type CredentialsGateway,
+  type GatewayHandle,
+} from "./gateway"
+import { setCopilotAuthFailureHandler } from "./lib/copilot-auth-failure"
+import {
+  createCopilotCredentialRefresher,
+  readCredentialRefreshMs,
+  type CopilotCredentialRefresher,
+  type InitialCredential,
+} from "./lib/copilot-credential-refresher"
+import { applyServingCopilotAccount } from "./lib/serving-account"
+import { stopCopilotRefreshLoop } from "./lib/token"
+import {
+  createCatalogCache,
+  initCatalogCache,
+} from "./models/advertised-models"
+import { createBillingGate } from "./policy/billing-gate"
+import {
+  createStrategyCache,
+  initStrategyCache,
+} from "./strategy/strategy-reader"
 import { createManagedAuthenticator } from "./users/managed-auth"
 import { createUsageEmitter, nullUsageEmitter } from "./users/usage-emitter"
 
@@ -117,7 +140,9 @@ async function setupCopilotMode(
   source: GitHubTokenSource,
   accountId?: string,
 ): Promise<void> {
-  state.githubTokenSource = source
+  // Records the source AND, for a gateway credential, the provider_accounts id
+  // that usage_events.account_id must carry (lib/serving-account.ts).
+  applyServingCopilotAccount(source, accountId)
   consola.info(
     source === "cli" ? "Using provided GitHub token"
     : source === "gateway" ?
@@ -268,26 +293,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   const serverUrl = formatServerUrl(binding.clientHostname, options.port)
 
-  // A gateway-managed proxy can be configured at any time through the admin UI.
-  // Register the reload strategy BEFORE the first token resolution so a request
-  // that arrives while idle can install the credential without a restart.
-  configureTokenReloader(
-    gateway ?
-      async () => {
-        const resolved = await resolveGitHubToken({
-          credentials: gateway.ports.credentials,
-        })
-        if (!resolved) return false
-        await setupCopilotMode(
-          resolved.token,
-          resolved.source,
-          resolved.accountId,
-        )
-        return true
-      }
-    : null,
-  )
-
   const resolvedGitHubToken =
     isGitHubCopilotEnabled() ?
       await resolveGitHubToken({
@@ -304,6 +309,39 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   } else {
     await setupProviderMode({ gatewayManaged: gateway !== null })
   }
+
+  // Credential auto-refresh (gateway mode): re-read the copilot credential
+  // every 60s and on upstream auth failures, so an account the operator
+  // replaced / deleted / disabled stops serving without a restart. The lazy
+  // reloader (idle-at-boot, cleared credential) shares the same single-flight
+  // pass. An explicit --github-token is an operator override: not refreshed.
+  const refresher =
+    (
+      gateway
+      && isGitHubCopilotEnabled()
+      && resolvedGitHubToken?.source !== "cli"
+    ) ?
+      startCredentialRefresher(gateway, resolvedGitHubToken)
+    : null
+  configureTokenReloader(
+    refresher ?
+      async () => {
+        await refresher.refreshNow()
+        return Boolean(state.copilotToken)
+      }
+    : null,
+  )
+  setCopilotAuthFailureHandler(
+    refresher ? () => refresher.reportAuthFailure() : null,
+  )
+
+  // Gateway model catalog + routing strategy (60s polls, unref'd timers).
+  initStrategyCache(
+    gateway ? createStrategyCache(gateway.ports.strategy) : null,
+  )
+  initCatalogCache(gateway ? createCatalogCache(gateway.ports.catalog) : null)
+  const billingGate =
+    gateway ? createBillingGate({ billing: gateway.ports.billing }) : null
 
   // One emitter for the process; the recorder facade emits into it.
   const usageEmitter =
@@ -323,6 +361,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   const server = createServer({
     networkExposed: binding.networkExposed,
     authenticator,
+    billingGate,
   })
 
   serve({
@@ -333,6 +372,58 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       idleTimeout: 0,
     },
   })
+}
+
+/** Invalidate the cached ephemeral Copilot token, then install `credential`. */
+async function installGatewayCredential(
+  credential: CopilotCredential,
+): Promise<void> {
+  stopCopilotRefreshLoop()
+  state.copilotToken = undefined
+  await setupCopilotMode(
+    credential.githubToken,
+    "gateway",
+    credential.accountId,
+  )
+}
+
+/** No usable gateway credential: requests answer the clean 503, never a stale token. */
+function clearCopilotCredential(): void {
+  stopCopilotRefreshLoop()
+  state.copilotToken = undefined
+  state.githubToken = undefined
+  applyServingCopilotAccount(undefined, undefined)
+}
+
+function startCredentialRefresher(
+  gateway: GatewayHandle,
+  resolved: ResolvedGitHubToken | null,
+): CopilotCredentialRefresher {
+  const initial: InitialCredential =
+    resolved?.source === "gateway" && resolved.accountId ?
+      {
+        kind: "gateway",
+        accountId: resolved.accountId,
+        githubToken: resolved.token,
+      }
+    : resolved ? { kind: "local" }
+    : { kind: "none" }
+  const refresher = createCopilotCredentialRefresher(
+    {
+      list: () => gateway.ports.credentials.listCopilotGitHubTokens(),
+      install: installGatewayCredential,
+      clear: clearCopilotCredential,
+      intervalMs: readCredentialRefreshMs(),
+      logger: {
+        info: (m) => consola.info(m),
+        warn: (m) => consola.warn(m),
+        error: (m) => consola.error(m),
+      },
+    },
+    initial,
+  )
+  refresher.start()
+  return refresher
 }
 
 export const start = defineCommand({

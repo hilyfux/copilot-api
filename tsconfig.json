@@ -12,6 +12,9 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
+    // src/contracts-pkg/ is vendored byte-for-byte from agent-gateway (its
+    // files import siblings with a `.ts` suffix); noEmit makes this legal.
+    "allowImportingTsExtensions": true,
 
     "strict": true,
     "noUnusedLocals": true,

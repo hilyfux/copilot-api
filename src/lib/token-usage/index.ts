@@ -12,6 +12,7 @@
  * `recordUsage(usage)`, and that seam is the right one. Only the sink moved.
  */
 import { requestContext, generateTraceId } from "~/lib/request-context"
+import { getServingCopilotAccountId } from "~/lib/serving-account"
 
 import type { UsageEventRow } from "~/gateway"
 import type { UsageEmitter } from "~/users/usage-emitter"
@@ -44,6 +45,11 @@ export interface TokenUsageEventInput extends UsageTokens {
   sessionId?: string | null
   source: TokenUsageSource
   traceId?: string | null
+  /**
+   * provider_accounts.id whose credential served the request, captured at
+   * request start. Copilot only; null/absent falls back to the key pin.
+   */
+  servingAccountId?: string | null
 }
 
 interface TokenUsageRecorderOptions {
@@ -131,7 +137,10 @@ function toUsageEventRow(input: TokenUsageEventInput): UsageEventRow | null {
       input.source === "copilot" ?
         "copilot"
       : input.providerName?.trim() || "copilot",
-    accountId: context.gatewayAccountId ?? null,
+    // The account whose credential SERVED the request wins; the key's admin
+    // pin (gatewayAccountId) is only a fallback. Copilot keys carry no pin, so
+    // before this the column was NULL for every copilot event.
+    accountId: input.servingAccountId ?? context.gatewayAccountId ?? null,
     sessionId:
       resolveTokenUsageSessionId(input.sessionId, input.fallbackSessionId)
       || null,
@@ -176,8 +185,12 @@ export function recordTokenUsageEvent(input: TokenUsageEventInput): void {
 export function createTokenUsageRecorder(
   options: TokenUsageRecorderOptions,
 ): (usage: UsageTokens) => void {
+  // Captured now, at request start: a credential swap while the request is in
+  // flight must not re-attribute usage to an account that did not serve it.
+  const servingAccountId =
+    options.source === "copilot" ? getServingCopilotAccountId() : null
   return (usage) => {
-    recordTokenUsageEvent({ ...usage, ...options })
+    recordTokenUsageEvent({ ...usage, ...options, servingAccountId })
   }
 }
 

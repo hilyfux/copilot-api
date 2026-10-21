@@ -358,11 +358,27 @@ describe("messages handler orchestration", () => {
       })
       expect(response.status).toBe(200)
       expect(findEndpointModel).toHaveBeenCalledWith(expectedModel)
-      expect(handleWithChatCompletions.mock.calls[0][1].model).toBe(
-        expectedModel,
-      )
+      // Claude ids without upstream metadata now route by the family table
+      // (Claude ← /v1/messages only), so the chosen flow may differ; the id
+      // handed to it must not.
+      const call =
+        handleWithChatCompletions.mock.calls[0]
+        ?? handleWithMessagesApi.mock.calls[0]
+      expect(call?.[1].model).toBe(expectedModel)
     },
   )
+
+  test("Claude model missing from the upstream list → Messages API by the family table, not chat/completions", async () => {
+    selectedModel = undefined
+    const response = await createApp().request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(createPayload({ model: "claude-opus-4.8" })),
+    })
+    expect(response.status).toBe(200)
+    expect(handleWithMessagesApi).toHaveBeenCalledTimes(1)
+    expect(handleWithChatCompletions).not.toHaveBeenCalled()
+  })
 
   test("restores discovery IDs before applying configured model mappings", async () => {
     modelMappings = { "glm-5.3-flash": "messages-model" }

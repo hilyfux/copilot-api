@@ -20,6 +20,7 @@ import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { ensureCopilotToken } from "~/lib/token-reload"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
+import { sendCopilotUpstream } from "~/services/copilot/upstream-recovery"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
@@ -67,18 +68,20 @@ export const createChatCompletions = async (
   consola.log(`<-- model: ${payload.model}`)
 
   const transportConfig = getUpstreamTransportConfig()
-  const response = await fetchUpstreamWithLifecycle(
-    `${copilotBaseUrl(state)}/chat/completions`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    },
-    {
-      clientSignal: options.clientSignal,
-      headersTimeoutMs: transportConfig.headersTimeoutMs,
-      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-    },
+  const response = await sendCopilotUpstream(headers, () =>
+    fetchUpstreamWithLifecycle(
+      `${copilotBaseUrl(state)}/chat/completions`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      },
+      {
+        clientSignal: options.clientSignal,
+        headersTimeoutMs: transportConfig.headersTimeoutMs,
+        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+      },
+    ),
   )
 
   logCopilotRateLimits(response.headers)

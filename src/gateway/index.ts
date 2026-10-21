@@ -24,6 +24,9 @@ import {
   createCredentialsGateway,
   type CredentialsGateway,
 } from "./credentials"
+import { createCatalogGateway, type CatalogGateway } from "./catalog"
+import { createStrategyGateway, type StrategyGateway } from "./strategy"
+import { createBillingGateway, type BillingGateway } from "./billing"
 
 export type GatewayPorts = {
   keys: KeysGateway
@@ -31,6 +34,12 @@ export type GatewayPorts = {
   health: HealthGateway
   settings: SettingsGateway
   credentials: CredentialsGateway
+  /** model_catalog via v_proxy_catalog_v1 (mig 171 grant). */
+  catalog: CatalogGateway
+  /** proxy strategy via v_proxy_strategy_{users,rules}_v1 (mig 171 grant). */
+  strategy: StrategyGateway
+  /** billing admission via v_proxy_billing_v1 (mig 171 grant). */
+  billing: BillingGateway
 }
 
 export type GatewayHandle = {
@@ -46,6 +55,9 @@ export function createGatewayPorts(pool: GatewayPool): GatewayPorts {
     health: createHealthGateway(pool),
     settings: createSettingsGateway(pool),
     credentials: createCredentialsGateway(pool),
+    catalog: createCatalogGateway(pool),
+    strategy: createStrategyGateway(pool),
+    billing: createBillingGateway(pool),
   }
 }
 
@@ -85,3 +97,6 @@ export type {
 export type { HealthGateway, HealthState, HealthUpsert } from "./health"
 export type { SettingsGateway } from "./settings"
 export type { CredentialsGateway, CopilotCredential } from "./credentials"
+export type { CatalogGateway, CatalogRow } from "./catalog"
+export type { StrategyGateway, StrategySnapshot } from "./strategy"
+export type { BillingGateway, BillingRow } from "./billing"

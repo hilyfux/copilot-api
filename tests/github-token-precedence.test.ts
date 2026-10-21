@@ -28,10 +28,12 @@ const gatewayWith = (
   value: Awaited<ReturnType<CredentialsGateway["readCopilotGitHubToken"]>>,
 ): CredentialsGateway => ({
   readCopilotGitHubToken: () => Promise.resolve(value),
+  listCopilotGitHubTokens: () => Promise.resolve(value ? [value] : []),
 })
 
 const gatewayThatThrows = (error: Error): CredentialsGateway => ({
   readCopilotGitHubToken: () => Promise.reject(error),
+  listCopilotGitHubTokens: () => Promise.reject(error),
 })
 
 // Loud defaults: if a test does not expect the env/file path, these prove it

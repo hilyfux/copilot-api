@@ -1,7 +1,5 @@
 import type { Context } from "hono"
 
-import type { Model } from "~/lib/types/models"
-
 import { COMPACT_REQUEST } from "~/lib/compact"
 import {
   getClaudeAutoModel,
@@ -11,7 +9,7 @@ import {
 } from "~/lib/config"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { fromClaudeDiscoveryModelId } from "~/lib/claude-models"
-import { findEndpointModel } from "~/lib/models"
+import { findEndpointModel, toCopilotUpstreamModelId } from "~/lib/models"
 import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import { state } from "~/lib/state"
 import type { SubagentMarker } from "~/lib/subagent"
@@ -26,6 +24,8 @@ import {
   providerMessagesHandlerDependencies,
 } from "~/routes/provider/messages/handler"
 import { getResponsesTransportForModel } from "~/routes/responses/utils"
+import { admitCopilotModel } from "~/policy/model-admission"
+import { routingEndpoints } from "~/lib/copilot-upstream-path"
 
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 import {
@@ -157,6 +157,13 @@ export async function handleCompletionPayload(
     })
   }
 
+  // Gateway model catalog + routing strategy (agent-gateway mig 171).
+  const admission = admitCopilotModel(requestedModel)
+  if (!admission.ok) return c.json(admission.body, admission.status)
+  if (admission.model !== requestedModel) {
+    anthropicPayload.model = admission.model
+  }
+
   debugJson(logger, "Anthropic request payload:", anthropicPayload)
 
   normalizeSystemMessages(anthropicPayload)
@@ -227,10 +234,14 @@ export async function handleCompletionPayload(
   logger.debug("Extracted session ID:", sessionId)
 
   const selectedModel = findEndpointModel(anthropicPayload.model)
-  anthropicPayload.model = selectedModel?.id ?? anthropicPayload.model
+  anthropicPayload.model =
+    selectedModel?.id ?? toCopilotUpstreamModelId(anthropicPayload.model)
   appendClaudeContinuationMessage(anthropicPayload)
 
-  if (shouldUseMessagesApi(selectedModel)) {
+  // Metadata first, family table when the upstream list lacks the model.
+  const routing = routingEndpoints(anthropicPayload.model, selectedModel)
+
+  if (shouldUseMessagesApi(routing)) {
     return await messagesFlowHandlers.handleWithMessagesApi(
       c,
       anthropicPayload,
@@ -247,7 +258,7 @@ export async function handleCompletionPayload(
     )
   }
 
-  if (shouldUseResponsesApi(selectedModel, compactType)) {
+  if (shouldUseResponsesApi(routing, compactType)) {
     return await messagesFlowHandlers.handleWithResponsesApi(
       c,
       anthropicPayload,
@@ -281,13 +292,15 @@ export async function handleCompletionPayload(
 const MESSAGES_ENDPOINT = "/v1/messages"
 
 const shouldUseResponsesApi = (
-  selectedModel: Model | undefined,
+  selectedModel: { supported_endpoints?: Array<string> } | undefined,
   compactType: ReturnType<typeof getCompactType>,
 ): boolean => {
   return Boolean(getResponsesTransportForModel(selectedModel, { compactType }))
 }
 
-const shouldUseMessagesApi = (selectedModel: Model | undefined): boolean => {
+const shouldUseMessagesApi = (
+  selectedModel: { supported_endpoints?: Array<string> } | undefined,
+): boolean => {
   const useMessagesApi = isMessagesApiEnabled()
   if (!useMessagesApi) {
     return false

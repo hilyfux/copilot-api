@@ -30,7 +30,12 @@ import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { pollAccessToken } from "~/services/github/poll-access-token"
 
+import {
+  isTokenExchangeAuthRejection,
+  reportCopilotAuthFailure,
+} from "./copilot-auth-failure"
 import { HTTPError } from "./error"
+import { configureCopilotTokenExpiryRefresh } from "./token-reload"
 import { state } from "./state"
 import { createOAuthAccountManager } from "./oauth-accounts"
 import type { OAuthAccountSummary } from "./types/oauth"
@@ -313,8 +318,16 @@ export function refreshCodexCredentialsOnce(
 
 export const applyCopilotTokenResponse = (
   response: GetCopilotTokenResponse,
+  nowMs: number = Date.now(),
 ): void => {
   state.copilotToken = response.token
+  // "Expired 5 min early": GitHub's refresh_in already sits ~5 min before the
+  // real expiry, so the token is treated as stale from refresh_in on and a
+  // request arriving after that refreshes it first (token-reload.ts).
+  state.copilotTokenStaleAt =
+    Number.isFinite(response.refresh_in) && response.refresh_in > 0 ?
+      nowMs + response.refresh_in * 1000
+    : undefined
 
   // The token exchange response is authoritative for routing the token it just
   // issued: `/copilot_internal/user` can disagree (e.g. enterprise seats via an
@@ -333,6 +346,8 @@ export const setupCopilotToken = async (
     if (!state.githubToken) throw new Error(`opencode token not found`)
 
     state.copilotToken = state.githubToken
+    state.copilotTokenStaleAt = undefined
+    configureCopilotTokenExpiryRefresh(null)
 
     consola.debug("GitHub Copilot token set from opencode auth token")
     if (state.showToken) {
@@ -345,6 +360,9 @@ export const setupCopilotToken = async (
 
   const response = await dependencies.getCopilotToken()
   applyCopilotTokenResponse(response)
+  configureCopilotTokenExpiryRefresh(async () => {
+    applyCopilotTokenResponse(await dependencies.getCopilotToken())
+  })
 
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
@@ -488,12 +506,24 @@ const MAX_RETRY_REFRESH_DELAY_MS = 600_000
 const RETRY_REFRESH_JITTER_MS = 15_000
 const MIN_REFRESH_DELAY_MS = 1_000
 
+/**
+ * Copilot background pre-refresh margin before GitHub's `refresh_in`.
+ * GitHub issues ~30 min tokens with refresh_in ≈ ttl − 5 min, so refreshing
+ * 5 min before refresh_in lands ~10 min before expiry (operator report
+ * 2026-08: pre-refresh ~10 min early). Relative to refresh_in on purpose —
+ * never the absolute expires_at, which depends on the local clock.
+ */
+export const COPILOT_PRE_REFRESH_BUFFER_MS = 5 * 60_000
+
 export const getRefreshDeadlineMs = (
   refreshIn: number,
   nowMs: number = Date.now(),
 ) =>
   nowMs
-  + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS)
+  + Math.max(
+    refreshIn * 1000 - COPILOT_PRE_REFRESH_BUFFER_MS,
+    MIN_REFRESH_DELAY_MS,
+  )
 
 // Use short wall-clock chunks so the next wake after sleep notices elapsed time
 // quickly, without relying on the server's absolute expires_at matching local time.
@@ -531,6 +561,15 @@ const runCopilotRefreshLoop = async (
       }
     } catch (error) {
       consola.error("Failed to refresh Copilot token:", error)
+      // GitHub refused the exchange: the GitHub token may have been revoked
+      // or replaced in the gateway. Ask the credential refresher to re-read
+      // (single-flight, debounced) instead of retrying a dead token forever.
+      if (
+        error instanceof HTTPError
+        && isTokenExchangeAuthRejection(error.response.status)
+      ) {
+        void reportCopilotAuthFailure()
+      }
       const delayMs = Math.min(
         retryDelayMs + Math.floor(Math.random() * RETRY_REFRESH_JITTER_MS),
         MAX_RETRY_REFRESH_DELAY_MS,

@@ -9,6 +9,8 @@ import {
 import { traceIdMiddleware } from "./lib/trace"
 import type { ManagedAuthenticator } from "./users/managed-auth"
 import { createManagedAuthMiddleware } from "./users/managed-auth-middleware"
+import type { BillingGate } from "./policy/billing-gate"
+import { createBillingGateMiddleware } from "./policy/billing-gate-middleware"
 import { alphaSearchRoutes } from "./routes/alpha-search/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { configRoutes } from "./routes/admin/config/route"
@@ -31,6 +33,11 @@ export interface CreateServerOptions {
    * `null` = standalone mode (no gateway database configured).
    */
   authenticator?: ManagedAuthenticator | null
+  /**
+   * Billing / quota admission (agent-gateway v_proxy_billing_v1). `null` =
+   * standalone mode: nothing to bill against, every request passes.
+   */
+  billingGate?: BillingGate | null
 }
 
 function resolveSameOriginCorsOrigin(
@@ -65,6 +72,9 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       allowUnauthenticatedPaths: ["/", "/health"],
     }),
   )
+  // After auth (needs the key hash), before any handler reads the body or
+  // calls upstream — kiro-api's order ("billing gate BEFORE concurrency").
+  server.use("*", createBillingGateMiddleware(options.billingGate ?? null))
   server.use(
     "/admin/*",
     createAuthMiddleware({

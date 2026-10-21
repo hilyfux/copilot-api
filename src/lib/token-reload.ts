@@ -21,6 +21,11 @@
  *     original "Copilot token not found" stands unchanged.
  */
 
+import {
+  isTokenExchangeAuthRejection,
+  reportCopilotAuthFailure,
+} from "~/lib/copilot-auth-failure"
+import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
 /** Installs a token into `state`; resolves false when the gateway has none. */
@@ -86,12 +91,63 @@ async function reloadOnce(): Promise<void> {
   await inFlight
 }
 
+// ── Stale ephemeral token (scope: "treat as expired 5 min early") ──────────
+let expiryRefresher: (() => Promise<void>) | null = null
+let expiryInFlight: Promise<void> | null = null
+
+/** Installed by setupCopilotToken: re-exchange the GitHub token now. */
+export function configureCopilotTokenExpiryRefresh(
+  next: (() => Promise<void>) | null,
+): void {
+  expiryRefresher = next
+  expiryInFlight = null
+}
+
+function isStale(nowMs: number): boolean {
+  const staleAt = state.copilotTokenStaleAt
+  return typeof staleAt === "number" && nowMs >= staleAt
+}
+
 /**
- * Guarantee `state.copilotToken` is set, reloading it from the gateway once when
- * it is not. Call this immediately before an upstream Copilot request needs the
- * token; it is a no-op on the hot path once the token exists.
+ * Single-flight, double-checked refresh of a stale token: concurrent requests
+ * share one exchange; a failed refresh keeps the current token (it may still
+ * be inside its real lifetime) and the 401 path recovers if it is not.
+ */
+async function refreshStaleToken(): Promise<void> {
+  if (!expiryRefresher || !isStale(Date.now())) return
+  if (!expiryInFlight) {
+    const refresh = expiryRefresher
+    expiryInFlight = (async () => {
+      if (!isStale(Date.now())) return // double-check inside the lock
+      await refresh()
+    })().finally(() => {
+      expiryInFlight = null
+    })
+  }
+  try {
+    await expiryInFlight
+  } catch (error) {
+    // Keep the current token (see above). A refused exchange means the GitHub
+    // credential itself is bad: let the credential refresher re-read.
+    if (
+      error instanceof HTTPError
+      && isTokenExchangeAuthRejection(error.response.status)
+    ) {
+      await reportCopilotAuthFailure()
+    }
+  }
+}
+
+/**
+ * Guarantee `state.copilotToken` is set (and not stale), reloading it from the
+ * gateway once when it is missing. Call this immediately before an upstream
+ * Copilot request needs the token; it is a no-op on the hot path once a fresh
+ * token exists.
  */
 export async function ensureCopilotToken(): Promise<void> {
-  if (state.copilotToken) return
+  if (state.copilotToken) {
+    if (isStale(Date.now())) await refreshStaleToken()
+    if (state.copilotToken) return
+  }
   await reloadOnce()
 }

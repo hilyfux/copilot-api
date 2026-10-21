@@ -23,6 +23,7 @@ import { state } from "~/lib/state"
 import { ensureCopilotToken } from "~/lib/token-reload"
 import { parseUserIdMetadata } from "~/lib/utils"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
+import { sendCopilotUpstream } from "~/services/copilot/upstream-recovery"
 
 export type MessagesStream = ReturnType<typeof events>
 export type CreateMessagesReturn = AnthropicResponse | MessagesStream
@@ -139,18 +140,20 @@ export const createMessages = async (
   consola.log(`<-- model: ${payload.model}`)
 
   const transportConfig = getUpstreamTransportConfig()
-  const response = await fetchUpstreamWithLifecycle(
-    `${copilotBaseUrl(state)}/v1/messages`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    },
-    {
-      clientSignal: options.clientSignal,
-      headersTimeoutMs: transportConfig.headersTimeoutMs,
-      streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-    },
+  const response = await sendCopilotUpstream(headers, () =>
+    fetchUpstreamWithLifecycle(
+      `${copilotBaseUrl(state)}/v1/messages`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      },
+      {
+        clientSignal: options.clientSignal,
+        headersTimeoutMs: transportConfig.headersTimeoutMs,
+        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+      },
+    ),
   )
 
   logCopilotRateLimits(response.headers)
