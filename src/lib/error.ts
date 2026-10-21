@@ -3,6 +3,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import consola from "consola"
 
+import { AccountConcurrencyOverloadedError } from "~/lib/account-concurrency-limiter"
+
 export class HTTPError extends Error {
   response: Response
 
@@ -57,6 +59,26 @@ export async function forwardError(
       status: 499,
       statusText: "Client Closed Request",
     })
+  }
+
+  // Per-account concurrency queue gave up after its bounded wait
+  // (lib/account-concurrency-limiter.ts). Fleet overload shape: 503
+  // overloaded_error + code server_is_overloaded + Retry-After — the shape
+  // codex-rs classifies as ServerOverloaded instead of blind-retrying.
+  if (error instanceof AccountConcurrencyOverloadedError) {
+    consola.warn(error.message)
+    c.header("Retry-After", String(error.retryAfterSeconds))
+    return c.json(
+      {
+        type: "error",
+        error: {
+          type: "overloaded_error",
+          code: "server_is_overloaded",
+          message: error.message,
+        },
+      },
+      503,
+    )
   }
 
   // No credential is a CONFIGURATION state: the proxy is up and the route

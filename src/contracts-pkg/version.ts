@@ -12,5 +12,5 @@
  * 线上以进程 `/version` 的 contractsVersion / contractsMajor 为准（app_settings[contracts.version] 只做观测）。
  */
 export const CONTRACT_MAJOR = 1
-export const CONTRACT_VERSION = 2
+export const CONTRACT_VERSION = 3
 export const CONTRACT_MIN_COMPAT = 1

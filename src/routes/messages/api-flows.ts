@@ -478,7 +478,9 @@ export const handleWithMessagesApi = async (
           outputTokens: usage.output_tokens,
         })
       }
-      recordUsage(usage)
+      recordUsage(
+        refusalSeen ? { ...usage, upstream_outcome: "refusal" } : usage,
+      )
     })
   }
 
@@ -496,6 +498,9 @@ export const handleWithMessagesApi = async (
   recordUsage({
     ...normalizeAnthropicUsage(response.usage),
     ...normalizeCopilotUsage(response.copilot_usage),
+    ...(isUpstreamRefusal(response.stop_reason) ?
+      { upstream_outcome: "refusal" as const }
+    : {}),
   })
   return c.json(response)
 }

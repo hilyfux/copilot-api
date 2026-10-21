@@ -1,6 +1,6 @@
 {
   "contractMajor": 1,
-  "contractVersion": 2,
+  "contractVersion": 3,
   "contractMinCompat": 1,
   "headerRule": ".ts：删第 1 行到第一个恰为 ' */' 的行（含）后 sha256；其它文件整文件 sha256",
   "files": {
@@ -107,8 +107,8 @@
       "maintainer": "codex-api"
     },
     "usage/usage-event.ts": {
-      "sha256": "42aaccfeac0b38206140d58c92f7bfd8588c5cc647241490e11e46dbb8e4025b",
-      "since": 1,
+      "sha256": "17ee08035bf1c423149b0c17b3ea27a217d3dd311f01ba60fcd8e9d8116c1c51",
+      "since": 3,
       "owner": "gateway",
       "maintainer": "gateway"
     },
@@ -121,6 +121,7 @@
   },
   "history": {
     "1": "e4cdab9c3b8a2b6c6056d4b414945a944dff2aa743499fdc501bfc350a47bc6c",
-    "2": "525ec169426e8ce451ed272157a4a642c2109044b5a23bedad41a169a22c807c"
+    "2": "525ec169426e8ce451ed272157a4a642c2109044b5a23bedad41a169a22c807c",
+    "3": "937b13886222b085bf1a28c5055ee2debcd9bf784e426e14ee8663b43bbdc710"
   }
 }

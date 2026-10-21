@@ -24,6 +24,9 @@ export interface UsageTokens {
   output_tokens?: number | null
   total_nano_aiu?: number | null
   total_tokens?: number | null
+  /** Set only when upstream refused (stop_reason=refusal): the gateway charge
+   *  worker stamps such a row 0 (contract v3 UsageEvent.upstreamOutcome). */
+  upstream_outcome?: "refusal" | null
 }
 
 export function normalizeToken(value: number | null | undefined): number {

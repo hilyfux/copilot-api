@@ -158,6 +158,9 @@ function toUsageEventRow(input: TokenUsageEventInput): UsageEventRow | null {
     durationMs: Date.now() - context.startTime,
     statusCode: null,
     networkRegion: null,
+    ...(input.upstream_outcome === "refusal" ?
+      { upstreamOutcome: "refusal" as const }
+    : {}),
   }
 }
 

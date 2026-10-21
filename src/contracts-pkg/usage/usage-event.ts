@@ -21,7 +21,8 @@
  *
  * The type intentionally maps 1:1 to the columns in
  * `agent-gateway/src/db/migrations/006_usage.sql` (+ later additions
- * via 015 region, 019 charge, 052 downstream_protocol, 120 served_model).
+ * via 015 region, 019 charge, 052 downstream_protocol, 120 served_model,
+ * 172 upstream_outcome).
  * Columns NOT in this type:
  *   - `id`, `charge_micros`, `charged_at`, `settlement_lane` (mig 099) —
  *     gateway-side; never produced by a proxy emitter. `settlement_lane`
@@ -86,6 +87,18 @@ export type UsageEvent = {
    *  Optional: the emitter omits the column on hosts not yet migrated.
    *  kiro-api writes the Kiro upstream id (requests.jsonl `kiroModel`). */
   servedModel?: string | null
+  /** Did the upstream actually produce a result? agent-gateway mig 172
+   *  `usage_events.upstream_outcome` (VARCHAR(16), nullable).
+   *   - 'refusal' — the upstream refused (e.g. Copilot Claude opus-5 on very
+   *     long input: HTTP 200 + empty content + stop_reason="refusal" +
+   *     output_tokens=1). The gateway charge-worker stamps charge_micros = 0
+   *     and debits NOTHING (no balance, token pack, quota window or lane).
+   *   - 'ok' — a normal answer.
+   *   - null / absent — unknown = charged exactly as before.
+   *  Optional: emitters that don't know it omit it (NULL); the emitter must
+   *  omit the column on hosts not yet migrated. Only copilot-api writes
+   *  'refusal' today. */
+  upstreamOutcome?: 'ok' | 'refusal' | null
   /**
    * Account's `network_region` slug at emit time. Persisted on
    * `usage_events.network_region` for post-hoc audits. null when:

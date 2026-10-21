@@ -62,7 +62,7 @@ describe("src/contracts-pkg matches its MANIFEST (offline)", () => {
     expect(extra).toEqual([])
   })
 
-  test("version.ts == MANIFEST == contracts/VERSION (v2)", () => {
+  test("version.ts == MANIFEST == contracts/VERSION (v3)", () => {
     expect([CONTRACT_MAJOR, CONTRACT_VERSION, CONTRACT_MIN_COMPAT]).toEqual([
       manifest.contractMajor,
       manifest.contractVersion,
@@ -79,7 +79,7 @@ describe("src/contracts-pkg matches its MANIFEST (offline)", () => {
       Number(env.CONTRACT_VERSION),
       Number(env.CONTRACT_MIN_COMPAT),
     ]).toEqual([CONTRACT_MAJOR, CONTRACT_VERSION, CONTRACT_MIN_COMPAT])
-    expect(CONTRACT_VERSION).toBe(2)
+    expect(CONTRACT_VERSION).toBe(3)
   })
 })
 

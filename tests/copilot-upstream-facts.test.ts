@@ -93,7 +93,7 @@ describe("#3 stop_reason=refusal is detected and flagged", () => {
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain("stop_reason=refusal")
     expect(lines[0]).toContain("traceId=tr-1")
-    expect(lines[0]).toContain("must NOT be charged")
+    expect(lines[0]).toContain("flagged upstream_outcome=refusal")
   })
 
   test("native Messages flow flags a non-stream refusal", async () => {

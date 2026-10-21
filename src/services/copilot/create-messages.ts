@@ -24,6 +24,10 @@ import { ensureCopilotToken } from "~/lib/token-reload"
 import { parseUserIdMetadata } from "~/lib/utils"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
 import { sendCopilotUpstream } from "~/services/copilot/upstream-recovery"
+import {
+  acquireCopilotUpstreamSlot,
+  holdSlotUntilStreamEnds,
+} from "~/services/copilot/account-concurrency"
 
 export type MessagesStream = ReturnType<typeof events>
 export type CreateMessagesReturn = AnthropicResponse | MessagesStream
@@ -140,32 +144,50 @@ export const createMessages = async (
   consola.log(`<-- model: ${payload.model}`)
 
   const transportConfig = getUpstreamTransportConfig()
-  const response = await sendCopilotUpstream(headers, () =>
-    fetchUpstreamWithLifecycle(
-      `${copilotBaseUrl(state)}/v1/messages`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      },
-      {
-        clientSignal: options.clientSignal,
-        headersTimeoutMs: transportConfig.headersTimeoutMs,
-        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-      },
-    ),
+  // Per-account concurrency slot (waits FIFO, never rejects on arrival); held
+  // for the whole exchange, streaming included.
+  const pendingLease = acquireCopilotUpstreamSlot(
+    payload.model,
+    options.clientSignal,
   )
+  const lease =
+    pendingLease instanceof Promise ? await pendingLease : pendingLease
+  let streamOwnsLease = false
+  try {
+    const response = await sendCopilotUpstream(headers, () =>
+      fetchUpstreamWithLifecycle(
+        `${copilotBaseUrl(state)}/v1/messages`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        },
+        {
+          clientSignal: options.clientSignal,
+          headersTimeoutMs: transportConfig.headersTimeoutMs,
+          streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+        },
+      ),
+    )
 
-  logCopilotRateLimits(response.headers)
+    logCopilotRateLimits(response.headers)
 
-  if (!response.ok) {
-    consola.error("Failed to create messages", response)
-    throw new HTTPError("Failed to create messages", response)
+    if (!response.ok) {
+      consola.error("Failed to create messages", response)
+      throw new HTTPError("Failed to create messages", response)
+    }
+
+    if (payload.stream) {
+      streamOwnsLease = true
+      return holdSlotUntilStreamEnds(
+        events(response),
+        lease,
+        options.clientSignal,
+      )
+    }
+
+    return (await response.json()) as AnthropicResponse
+  } finally {
+    if (!streamOwnsLease) lease.release()
   }
-
-  if (payload.stream) {
-    return events(response)
-  }
-
-  return (await response.json()) as AnthropicResponse
 }

@@ -1038,6 +1038,100 @@ test("messages Messages flow records Copilot AIU from non-streaming response", a
     downstreamProtocol: "anthropic",
     providerType: "copilot",
   })
+  // A normal answer carries no outcome flag → the charge worker bills it as before.
+  expect(usageCapture.rows[0]?.upstreamOutcome).toBeUndefined()
+})
+
+// Upstream refusal (operator's Copilot report: claude-opus-5 with huge input →
+// HTTP 200, empty content, stop_reason=refusal, billed upstream). The usage row
+// must carry upstreamOutcome='refusal' (contract v3) so the gateway charge
+// worker stamps it 0 instead of charging the user for the input tokens.
+test("messages Messages flow flags a non-streaming upstream refusal on the usage row", async () => {
+  createMessages.mockImplementationOnce(
+    (payload: AnthropicMessagesPayload): Promise<CreateMessagesReturn> =>
+      Promise.resolve({
+        ...createMessagesResult(payload.model),
+        stop_reason: "refusal",
+        usage: { input_tokens: 360_000, output_tokens: 1 },
+      } as unknown as CreateMessagesReturn),
+  )
+  const payload: AnthropicMessagesPayload = {
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+    model: "claude-opus-5",
+  }
+  const response = await withGatewayIdentity(() =>
+    handleWithMessagesApi(createContext(), payload, {
+      logger,
+      requestId: "request-1",
+    }),
+  )
+  expect(response.status).toBe(200)
+  await response.json()
+  expect(usageCapture.rows).toHaveLength(1)
+  expect(usageCapture.rows[0]).toMatchObject({
+    inputTokens: 360_000,
+    outputTokens: 1,
+    upstreamOutcome: "refusal",
+  })
+})
+
+test("messages Messages flow flags a streaming upstream refusal on the usage row", async () => {
+  createMessages.mockImplementationOnce(
+    (payload: AnthropicMessagesPayload): Promise<CreateMessagesReturn> =>
+      Promise.resolve(
+        createMessagesStream([
+          {
+            event: "message_start",
+            data: JSON.stringify({
+              message: {
+                content: [],
+                id: "msg-test",
+                model: payload.model,
+                role: "assistant",
+                stop_reason: null,
+                stop_sequence: null,
+                type: "message",
+                usage: { input_tokens: 360_000, output_tokens: 0 },
+              },
+              type: "message_start",
+            }),
+          },
+          {
+            event: "message_delta",
+            data: JSON.stringify({
+              delta: { stop_reason: "refusal", stop_sequence: null },
+              type: "message_delta",
+              usage: { input_tokens: 360_000, output_tokens: 1 },
+            }),
+          },
+          {
+            event: "message_stop",
+            data: JSON.stringify({ type: "message_stop" }),
+          },
+        ]) as unknown as CreateMessagesReturn,
+      ),
+  )
+  const payload: AnthropicMessagesPayload = {
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hello" }],
+    model: "claude-opus-5",
+    stream: true,
+  }
+  const app = new Hono()
+  app.post("/", (c) =>
+    handleWithMessagesApi(c, payload, { logger, requestId: "request-1" }),
+  )
+  const response = await withGatewayIdentity(() =>
+    app.request("/", { method: "POST" }),
+  )
+  expect(response.status).toBe(200)
+  await response.text()
+  expect(usageCapture.rows).toHaveLength(1)
+  expect(usageCapture.rows[0]).toMatchObject({
+    outputTokens: 1,
+    upstreamOutcome: "refusal",
+  })
 })
 
 test("messages Responses flow uses websocket transport by default for dual-endpoint models", async () => {

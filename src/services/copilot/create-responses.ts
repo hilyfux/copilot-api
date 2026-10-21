@@ -40,6 +40,10 @@ import {
 import { createResponsesHttpEventStream } from "~/services/responses-http"
 import { fetchUpstreamWithLifecycle } from "~/services/upstream-http"
 import { sendCopilotUpstream } from "~/services/copilot/upstream-recovery"
+import {
+  acquireCopilotUpstreamSlot,
+  holdSlotUntilStreamEnds,
+} from "~/services/copilot/account-concurrency"
 
 interface ResponsesRequestOptions {
   vision: boolean
@@ -94,11 +98,20 @@ export const createResponses = async (
         subagentMarker,
       },
     )
-    const stream = createPooledResponsesWebSocketStream(
-      websocketRequest,
-      clientSignal,
-    )
-    return stream
+    // Per-account concurrency slot, held until the websocket turn ends.
+    const pendingLease = acquireCopilotUpstreamSlot(payload.model, clientSignal)
+    const lease =
+      pendingLease instanceof Promise ? await pendingLease : pendingLease
+    try {
+      const stream = createPooledResponsesWebSocketStream(
+        websocketRequest,
+        clientSignal,
+      )
+      return holdSlotUntilStreamEnds(stream, lease, clientSignal)
+    } catch (error) {
+      lease.release()
+      throw error
+    }
   }
 
   return await createHttpResponses(payload, headers, clientSignal)
@@ -110,34 +123,49 @@ const createHttpResponses = async (
   clientSignal?: AbortSignal,
 ): Promise<CreateResponsesReturn> => {
   const transportConfig = getUpstreamTransportConfig()
-  const response = await sendCopilotUpstream(headers, () =>
-    fetchUpstreamWithLifecycle(
-      `${copilotBaseUrl(state)}/responses`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      },
-      {
+  // Per-account concurrency slot (waits FIFO, never rejects on arrival); held
+  // for the whole exchange, streaming included.
+  const pendingLease = acquireCopilotUpstreamSlot(payload.model, clientSignal)
+  const lease =
+    pendingLease instanceof Promise ? await pendingLease : pendingLease
+  let streamOwnsLease = false
+  try {
+    const response = await sendCopilotUpstream(headers, () =>
+      fetchUpstreamWithLifecycle(
+        `${copilotBaseUrl(state)}/responses`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        },
+        {
+          clientSignal,
+          headersTimeoutMs: transportConfig.headersTimeoutMs,
+          streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
+        },
+      ),
+    )
+
+    logCopilotRateLimits(response.headers)
+
+    if (!response.ok) {
+      consola.error("Failed to create responses", response)
+      throw new HTTPError("Failed to create responses", response)
+    }
+
+    if (payload.stream) {
+      streamOwnsLease = true
+      return holdSlotUntilStreamEnds(
+        createResponsesSafeStream(createResponsesHttpEventStream(response)),
+        lease,
         clientSignal,
-        headersTimeoutMs: transportConfig.headersTimeoutMs,
-        streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
-      },
-    ),
-  )
+      )
+    }
 
-  logCopilotRateLimits(response.headers)
-
-  if (!response.ok) {
-    consola.error("Failed to create responses", response)
-    throw new HTTPError("Failed to create responses", response)
+    return (await response.json()) as ResponsesResult
+  } finally {
+    if (!streamOwnsLease) lease.release()
   }
-
-  if (payload.stream) {
-    return createResponsesSafeStream(createResponsesHttpEventStream(response))
-  }
-
-  return (await response.json()) as ResponsesResult
 }
 
 type ResponsesWebSocketPayload = ResponsesPayload & {

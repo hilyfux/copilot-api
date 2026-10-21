@@ -12,6 +12,11 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise"
 
 import type { UsageEvent } from "~/contracts-pkg/usage/usage-event"
 
+import {
+  createColumnProbe,
+  type ColumnProbe,
+} from "~/contracts-pkg/db/column-probe"
+
 import type { GatewayConnection, GatewayPool } from "./db"
 import { selectClientKeysByHash } from "./keys"
 
@@ -71,7 +76,10 @@ export type UsageGateway = {
   openUnit(): Promise<UsageUnit>
 }
 
-function unitOn(conn: GatewayConnection): UsageUnit {
+function unitOn(
+  conn: GatewayConnection,
+  outcomeColumn: ColumnProbe,
+): UsageUnit {
   return {
     begin: () => conn.beginTransaction(),
     commit: () => conn.commit(),
@@ -127,14 +135,24 @@ function unitOn(conn: GatewayConnection): UsageUnit {
         e.statusCode,
         e.networkRegion,
       ])
+      // upstream_outcome (agent-gateway mig 172) is named only once the column
+      // exists: naming a missing column would fail the whole batch and lose every
+      // request's usage on a host whose gateway hasn't migrated yet.
+      const withOutcome = await outcomeColumn.has()
+      const values =
+        withOutcome ?
+          rows.map((r, i) => [...r, batch[i]?.upstreamOutcome ?? null])
+        : rows
       await conn.query(
         `INSERT IGNORE INTO usage_events (
            request_id, occurred_at, key_hash, user_id, provider_type, account_id,
            session_id, model, served_model, downstream_protocol,
            input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
-           reasoning_tokens, duration_ms, status_code, network_region
+           reasoning_tokens, duration_ms, status_code, network_region${
+             withOutcome ? ", upstream_outcome" : ""
+           }
          ) VALUES ?`,
-        [rows],
+        [values],
       )
     },
 
@@ -211,9 +229,16 @@ function unitOn(conn: GatewayConnection): UsageUnit {
 }
 
 export function createUsageGateway(pool: GatewayPool): UsageGateway {
+  // One probe per gateway: a found column is remembered forever, a missing one
+  // is re-probed after 60s (picks up mig 172 without a restart).
+  const outcomeColumn = createColumnProbe(
+    pool,
+    "usage_events",
+    "upstream_outcome",
+  )
   return {
     async openUnit() {
-      return unitOn(await pool.getConnection())
+      return unitOn(await pool.getConnection(), outcomeColumn)
     },
   }
 }

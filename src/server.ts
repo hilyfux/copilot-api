@@ -26,6 +26,7 @@ import { providerResponsesRoutes } from "./routes/provider/responses/route"
 import { responsesRoutes } from "./routes/responses/route"
 import { usageRoute } from "./routes/usage/route"
 import { videoRoutes } from "./routes/videos/route"
+import { copilotConcurrencySnapshot } from "./services/copilot/account-concurrency"
 export interface CreateServerOptions {
   networkExposed?: boolean
   /**
@@ -98,6 +99,8 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     c.json({
       status: "ok",
       service: "copilot-api",
+      // Per-account upstream concurrency (provider_accounts ids + counts only).
+      copilotUpstreamConcurrency: copilotConcurrencySnapshot(),
     }),
   )
 
