@@ -1,47 +1,56 @@
-name: CI
-
+# 服务仓 CI 模板（2026-10-21，build once / deploy anywhere）——复制到每个服务仓的
+# .github/workflows/ci.yml，一字不改（服务名取自 deploy.json 的 service）。部署分支不是 main 的仓
+# （copilot-api = selfhost/azure）把下面两处 main 换成该分支名，其余不变。逻辑全在 agent-stack 的
+# .github/actions/*（私有组合 action 由 GitHub 直接取用，agent-stack 已设 Actions 访问
+# access_level=user，服务仓不需要任何跨仓 token）。
+#
+#   test   ：与 scripts/pre-release-gate.sh 同一套文件发现与分片（4 片并行），任一片红即红。
+#            release.sh 的预发布门看到该提交的 test* 检查全绿且工作树干净 → 不再本地重跑。
+#   image  ：push 到 main 且 test 全绿后，用 agent-stack 的 Dockerfile 打包并推到
+#            ghcr.io/<owner>/<svc>:sha-<short7>（另有 :v<version>、:main）。release.sh 发布时
+#            主机优先 `docker pull` 它（需 operator 一次性 scripts/setup-registry-auth.sh），
+#            拉不到就回到主机构建。
+name: ci
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [selfhost/azure]
   pull_request:
-    types: [opened, synchronize, reopened]
-
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
+    name: test (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.18.0"
-
-      - name: Verify Node sqlite support
-        run: node -e "import('node:sqlite').then(() => console.log('node:sqlite ok')).catch((error) => { console.error(error); process.exit(1) })"
-
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install --frozen-lockfile
-
-      - name: Run linter
-        run: bun run lint:all
-
-      - name: Run type check
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: typecheck
+        if: matrix.shard == 0
         run: bun run typecheck
-
-      - name: Run desktop type check
-        working-directory: desktop
-        run: bun run typecheck
-
-      - name: Run tests
-        run: bun test
-
-      - name: Build
-        run: bun run build
+      - uses: hilyfux/agent-stack/.github/actions/bun-test-shard@main
+        with:
+          shard: ${{ matrix.shard }}
+          total: 4
+  image:
+    name: image
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/selfhost/azure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hilyfux/agent-stack/.github/actions/service-image@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # service name comes from deploy.json
