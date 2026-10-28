@@ -40,7 +40,7 @@ boost             → PDCAA iteration spine (Stable Contract / cycles / AutoRese
        ↓
 writing-plans     → if migration spans ≥ 3 cycles or ≥ 2 services
        ↓
-r4/sync4          → 全端 deploy (local → GitHub → LAN 192.168.1.186 → Azure 20.198.233.74)；cloud/222 已退役 2026-06-10
+r4/sync4          → 发布 (local → GitHub → LAN 192.168.1.186)；azure(20.198.233.74) 已于 2026-10-28 停服删机退出发布面；cloud/222 已退役 2026-06-10
 ```
 
 `cross-repo-sync` subagent dispatched automatically when a change touches files shared by both proxies (see CLAUDE.md trigger table).

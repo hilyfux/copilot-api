@@ -1,6 +1,14 @@
 # Azure deploy runbook — copilot-api as an agent-gateway proxy
 
-Status: **PREPARE-ONLY, not executed.** Written by W4 (ingress + deploy prep) of the
+⛔ **2026-10-28 update: azure retired.** The operator shut down the public azure
+("Agent On") product line; the Azure VM (`azure-sg-agent-on`, `20.198.233.74` / LB
+`20.6.92.121`) and all its data (users, accounts, keys, usage, DB) were deleted —
+nothing kept. This runbook — and the deployment it describes — is now **history
+only**; copilot-api does not run on any host today (code kept for relaunch; config
+preserved at `agent-stack/profiles/agent-on/`). Do not follow these steps against a
+live host without first re-provisioning via the relaunch kit.
+
+Status (historical): **PREPARE-ONLY, not executed** as of writing. Written by W4 (ingress + deploy prep) of the
 "Copilot as a first-class agent-gateway provider" task. Nothing in this file has been
 run. Do not run any step here until W1 (catalog/routing) + W2 (migration 168) + W3
 (proxy green) are merged — see "Merge order" in `agent-gateway/TASK-copilot-provider.md` §3.

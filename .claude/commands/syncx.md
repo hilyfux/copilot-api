@@ -1,11 +1,11 @@
 ---
-description: 容器化全端发布 — GitHub + LAN + Azure，统一经 agent-stack/release.sh（env-parity 门 + 真实请求 200 门 + 秒回退）
+description: 容器化发布 — GitHub + LAN，统一经 agent-stack/release.sh（env-parity 门 + 真实请求 200 门 + 秒回退）；azure 2026-10-28 起冻结（停服删机），不是发布目标
 allowed-tools: Bash, Read
 ---
 
 # 容器化全端发布
 
-把**当前项目**的当前 HEAD 推 GitHub，并容器化重发到 LAN + Azure。
+把**当前项目**的当前 HEAD 推 GitHub，并容器化重发到 LAN。（azure 2026-10-28 起冻结，见下文「⏸ azure 已冻结」。）
 
 > 2026-07-06 收敛完成：**四服务**（codex-api / kiro-api / agent-gateway / byok-api）
 > ×2 主机全部走同一套流程、同一版本的门、同一形态构建目录——不再有"某服务没走过
@@ -19,7 +19,8 @@ allowed-tools: Bash, Read
 
 ## 产品线代号（2026-07-25 定稿；权威定义见 agent-gateway `docs/product-lines.md`）
 
-`--host lan` = **lan**（局域网自家用，域名 Energy）；`--host azure` = **azure**（Agent On，对外服务）；
+`--host lan` = **lan**（局域网自家用，域名 Energy）。
+azure = Agent On（对外服务）**2026-10-28 起冻结、不再是发布目标**——`--host azure` 被 release.sh 拒绝（退出码 4）；
 （ailink 已于 2026-08-26 **退役**：产品终止、hosts.json 条目与 compose 栈已删除，`--host ailink` 不再是合法取值。）
 
 ## ⛔ ailink 已退役（2026-08-26，operator：「产品不做了」）
@@ -29,16 +30,24 @@ allowed-tools: Bash, Read
 自带的 `new-api` 自治，与本体系再无契约关系。`--host ailink` 不是合法取值；
 历史脉络见 `docs/product-lines.md`「线的状态」retired 段。
 
+## ⏸ azure 已冻结（2026-10-28，operator 停掉 Agent On）
+
+azure 冻结，不再是发布目标：服务已停，Azure 主机（azure-sg-agent-on）和上面的全部数据已删除（用户 / 账号不保留）。
+代码与配置保留在仓库里，以后在**新机器**上重新上线：agent-stack `profiles/agent-on/README.md`
+（`./bootstrap-host.sh --profile agent-on --host <新键>`）。agent-stack `retired-hosts.json` 让 `release.sh --host azure`
+直接拒绝（退出码 4），旧 IP 换了键名也会被拒。本命令遇到 `--host azure` **拒绝执行**并提示上面这段。
+
 ## 发布原则（2026-07-30，operator 定）
 
-**原则上只发布 lan；azure 须 operator 人工确认要同步、并显式指定后才发。**
+**只发布 lan。** azure 2026-10-28 起冻结（停服删机）：`--host azure` 被 release.sh 硬拒绝（退出码 4），
+不存在「人工确认后发 azure」这条路径——没有机器可发，确认与否结果相同。下面几条是 azure 重新上线前的历史脉络，
+仅说明「为什么以前即使通道都能发，默认动作也只动 lan」；重新上线后这条原则本身可能需要重新讨论。
 
-- 判断口诀：**改了 `src/`，默认发 lan 验证；azure 等人工确认再同步**。
-- 「三台走同一条发布通道」（上文 2026-07-27 收敛）说的是**通道能力**一致，不是默认动作——
+- （历史）判断口诀：改了 `src/`，默认发 lan 验证；azure 等人工确认再同步。
+- 「三台走同一条发布通道」（2026-07-27 收敛）说的是**通道能力**一致，不是默认动作——
   能力上任一台都可发，动作上默认只动 lan。
-- AI 不得自行决定把改动同步到 azure；用户原话点名（如「同步到 azure」「两台都发」）
-  或回答确认后，才对该台执行 `release.sh`。
-- **「全端发布」= lan + azure**（ailink 已退役）。
+- （历史）AI 不得自行决定把改动同步到 azure；用户原话点名或回答确认后才执行。
+- **「全端发布」现在 = lan**（azure 2026-10-28 冻结、ailink 已退役）。azure 重新上线后才恢复「lan + azure」。
 
 ## 铁律对照
 - **高内聚**：命令只编排；构建 / 门 / 回退在 release.sh 一处
@@ -48,11 +57,11 @@ allowed-tools: Bash, Read
 - **扩展**：加主机 = hosts.json 一行（`--host` 自然支持）；加服务 = 命令 auto-detect 通用
 
 ## 输入
-- 无参数 → GitHub push + **只发 `lan`**（发布原则 2026-07-30；azure 默认不发）
-- `--host <key>` → 只发某台（key = hosts.json 顶层键）。**发 azure 的唯一途径** =
-  operator 人工确认要同步（原话点名或回答确认），再 `--host azure` 执行
+- 无参数 → GitHub push + **只发 `lan`**
+- `--host <key>` → 只发某台（key = hosts.json 顶层键）
+- `--host azure` → **拒绝执行**：azure 2026-10-28 起冻结（停服删机），不再是发布目标
 - `--host ailink` → **拒绝执行**并提示已退役（2026-08-26）
-- `--no-lan` → 连 lan 也跳过（只 push）；`--no-azure` 保留但通常冗余（默认已不发）
+- `--no-lan` → 连 lan 也跳过（只 push）
 - `--no-push` → 跳过 GitHub push（只重发容器）
 - `--dry-run` → 只打印计划，不执行
 
@@ -101,13 +110,12 @@ release.sh **不 bump 版本**（镜像 tag = `package.json` 版本，只读）�
 |---|---|---|
 | GitHub | push `<branch>` | ✓ / ✗ / skip |
 | lan | `release.sh <svc> --host lan` | ✅ cutover OK / ✗ / skip |
-| azure | `release.sh <svc> --host azure` | ✅ / ✗ / skip |
+| azure | ⏸ 冻结（2026-10-28 停服删机），不发 | skip |
 
 （ailink 已退役，不再出现在本表。）
 
 任一格 ✗ 不算成功，用 ⚠ 标注并把 release.sh 输出附上。
-azure 未获人工确认时按发布原则填 skip（默认态，不算失败）；汇报时提醒一句
-「azure 未同步，需要时说一声」。
+azure 冻结期间固定填 skip（不算失败，也不用再提醒「需要时说一声」——它没有机器可发）。
 
 ## 发布后收敛核对（2026-07-06 收敛经验，全绿后快速自检）
 ```bash
@@ -121,7 +129,7 @@ gateway ~136M（chrome 层）、codex ~4M、kiro ~1.2M、byok ~0.8M。
 ## 故障排查指针
 - 下游 "Connection closed mid-response" / ECONNRESET + nginx 零记录 → 事故当下跑
   `agent-stack/test/probe-lb-vs-tunnel.sh` 三分定位（LB 数据面 / VM本机 / 用户侧网络）。
-- azure 入口拓扑唯一权威：`agent-stack/docs/azure-ingress-topology.md`（**Azure LB 是
+- （历史，azure 已于 2026-10-28 停服删机）azure 入口拓扑：`agent-stack/docs/azure-ingress-topology.md`（**Azure LB 是
   唯一公网进出口**——443→30443/80→39520/39517→39517，SSH 也在 LB 上；"没有 LB"是
   已被 IMDS 证伪的认知漂移）。
 - 被杀请求可能在桥侧记 `outcome=ok`（客户端 abort + quiet close，27eca10 后已改记
@@ -138,9 +146,9 @@ gateway ~136M（chrome 层）、codex ~4M、kiro ~1.2M、byok ~0.8M。
 | 别名 | 主机 | 用户 | 认证 |
 |---|---|---|---|
 | `lan-server` | 192.168.1.186 | root | ssh key + 备用密码 `wlq.1919` |
-| `azure-sg-agent-on` | 20.198.233.74:8022 | azureuser | 密钥 `~/.ssh/azure-sg-agent-on`（2026-09-23 起亦可密码登录，口令只记在 vms 仓库，不入本仓）+ sudo NOPASSWD |
+| ~~`azure-sg-agent-on`~~（2026-10-28 已删除） | ~~20.198.233.74:8022~~ | azureuser | 密钥 `~/.ssh/azure-sg-agent-on`（2026-09-23 起亦可密码登录，口令只记在 vms 仓库，不入本仓）+ sudo NOPASSWD |
 
-| 资源 | LAN (186) | Azure (20.198.233.74) |
+| 资源 | LAN (186) | Azure（2026-10-28 已删除，仅存档） |
 |---|---|---|
 | MySQL 8 | `:3306` root/`dbPaSsre^186` db=`agent_gateway` | `:3306` root/`dbPaSsre^186` db=`agent_gateway` |
 | Redis 7 | `:6379` | `:6379` |
@@ -150,4 +158,4 @@ gateway ~136M（chrome 层）、codex ~4M、kiro ~1.2M、byok ~0.8M。
 ## 经验法则
 - 同一服务 **1 分钟内不重复发**（cutover 有短暂唯一写者窗口）。
 - 网关与 codex/kiro/byok 均 `overlapSafe`，走零停机重叠切换（先等主机空闲、慢≠坏超时重试）；只有非 overlapSafe 服务或容器化 nginx 主机才退回“停旧起新”。发布不碰 Mihomo 内核。
-- 只想 push 不部署：`--no-lan --no-azure`。
+- 只想 push 不部署：`--no-lan`。

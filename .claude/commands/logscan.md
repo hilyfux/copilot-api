@@ -13,19 +13,17 @@ allowed-tools: Bash, Read, Grep, Glob
 > 全程只读——不 restart、不改配置、不写主机任何文件。
 
 ## 输入
-- 无参数 → **lan + azure 并行**拉近 24h（只读操作，无需发布式确认）
-- `--host <key>` → 只拉某台（key = hosts.json 顶层键：lan / azure）
+- 无参数 → 拉 **lan** 近 24h（只读操作，无需发布式确认；azure 2026-10-28 停服删机，`--host azure` 被拒、退出码 4）
+- `--host <key>` → 只拉某台（key = hosts.json 顶层键；现役只有 lan）
 - `--since <窗口>` → 覆盖默认 24h（如 `6h` / `90m` / `7d`）
 - `--svc <name>` → 只拉某个服务
 
 ## 执行
 
-### 1. 并行拉取（Bash run_in_background，两台同时）
+### 1. 拉取（Bash run_in_background）
 ```bash
 cd ../agent-stack && ./scripts/fetch-logs.sh --host lan --since 24h        # 服务层
-cd ../agent-stack && ./scripts/fetch-logs.sh --host azure --since 24h
 cd ../agent-stack && ./scripts/scan-infra-logs.sh --host lan               # 基建层
-cd ../agent-stack && ./scripts/scan-infra-logs.sh --host azure
 ```
 服务层输出落 `agent-stack/logs-pull/<host>-<UTC时间戳>/`（自动保留每主机最近 5 份）；
 基建层（nginx 入口 / systemd 定时任务 / mihomo·redis 宿主进程 / MySQL）直接打印，
