@@ -4,7 +4,7 @@
 > 结论先行：**不照搬 kiro-api 的网关层**。自用场景下那些层是纯负债。
 > 状态：2026-10-20 决策，实现见 `selfhost/azure` 分支。⛔ **2026-10-28 更新**：azure
 > 主机已停服删机（operator 关停产品线，VM 与全部数据已删），copilot-api 随之
-> **不再运行在任何主机上**（代码保留，配置见 `agent-stack/profiles/agent-on/`
+> **不再运行在任何主机上**（代码保留，配置见 `agent-stack/profiles/public/`
 > 供重开）。以下内容是当时的决策记录，按历史保留。
 
 ---

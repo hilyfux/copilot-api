@@ -33,8 +33,8 @@ azure = Agent On（对外服务）**2026-10-28 起冻结、不再是发布目标
 ## ⏸ azure 已冻结（2026-10-28，operator 停掉 Agent On）
 
 azure 冻结，不再是发布目标：服务已停，Azure 主机（azure-sg-agent-on）和上面的全部数据已删除（用户 / 账号不保留）。
-代码与配置保留在仓库里，以后在**新机器**上重新上线：agent-stack `profiles/agent-on/README.md`
-（`./bootstrap-host.sh --profile agent-on --host <新键>`）。agent-stack `retired-hosts.json` 让 `release.sh --host azure`
+代码与配置保留在仓库里；再上线**不叫 Agent On**，是一条新的对外线（新品牌 / 域名 / 主机键）：agent-stack `profiles/public/README.md`
+（`./bootstrap-host.sh --profile public --params <参数文件>`）。agent-stack `retired-hosts.json` 让 `release.sh --host azure`
 直接拒绝（退出码 4），旧 IP 换了键名也会被拒。本命令遇到 `--host azure` **拒绝执行**并提示上面这段。
 
 ## 发布原则（2026-07-30，operator 定）

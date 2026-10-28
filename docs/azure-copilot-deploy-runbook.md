@@ -5,7 +5,7 @@
 `20.6.92.121`) and all its data (users, accounts, keys, usage, DB) were deleted —
 nothing kept. This runbook — and the deployment it describes — is now **history
 only**; copilot-api does not run on any host today (code kept for relaunch; config
-preserved at `agent-stack/profiles/agent-on/`). Do not follow these steps against a
+preserved at `agent-stack/profiles/public/`). Do not follow these steps against a
 live host without first re-provisioning via the relaunch kit.
 
 Status (historical): **PREPARE-ONLY, not executed** as of writing. Written by W4 (ingress + deploy prep) of the
